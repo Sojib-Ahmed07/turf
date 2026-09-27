@@ -3,60 +3,38 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { format } from "date-fns";
+import { format12h } from "@/lib/time";
 import { motion, AnimatePresence } from "framer-motion";
 import {
     Search,
     X,
-    Wallet,
     Smartphone,
     CheckCircle2,
     XCircle,
     AlertCircle,
     Loader2,
 } from "lucide-react";
-import {
-    adminCancelBooking,
-    adminMarkPaid,
-    adminApproveBooking,
-    adminRejectBooking,
-} from "@/app/actions/admin";
+import { adminCancelBooking } from "@/app/actions/admin";
 
-function formatINR(v) {
+function formatBDT(v) {
     const n = Number(v);
-    if (!n) return "₹0";
-    return `₹${n.toLocaleString("en-IN")}`;
+    if (!n) return "৳0";
+    return `৳${n.toLocaleString("en-IN")}`;
 }
 
 function StatusBadge({ status }) {
-    const styles = {
-        confirmed: "bg-turf-50 text-turf-700 ring-turf-200",
-        cancelled: "bg-red-50 text-red-600 ring-red-200",
-        pending: "bg-amber-50 text-amber-700 ring-amber-200",
-    }[status] ?? "bg-ink-50 text-ink-600 ring-ink-200";
+    const styles =
+        {
+            confirmed: "bg-turf-50 text-turf-700 ring-turf-200",
+            cancelled: "bg-red-50 text-red-600 ring-red-200",
+            pending: "bg-amber-50 text-amber-700 ring-amber-200",
+        }[status] ?? "bg-ink-50 text-ink-600 ring-ink-200";
 
     return (
         <span
             className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ring-1 ${styles}`}
         >
             {status}
-        </span>
-    );
-}
-
-function PaymentBadge({ method, status }) {
-    const Icon = method === "bkash" ? Smartphone : Wallet;
-    const label = method === "bkash" ? "bKash" : "Cash";
-    const paid = status === "paid";
-
-    return (
-        <span
-            className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${paid
-                    ? "bg-turf-50 text-turf-700"
-                    : "bg-amber-50 text-amber-700"
-                }`}
-        >
-            <Icon className="h-3 w-3" />
-            {label} · {paid ? "Paid" : "Unpaid"}
         </span>
     );
 }
@@ -76,7 +54,7 @@ export default function BookingsTable({ initialBookings, pitches }) {
             if (statusFilter && b.status !== statusFilter) return false;
             if (search) {
                 const q = search.toLowerCase();
-                const hay = `${b.userName} ${b.userEmail} ${b.pitchName} ${b.bookingDate} ${b.startTime}`.toLowerCase();
+                const hay = `${b.userName} ${b.userEmail} ${b.pitchName} ${b.bookingDate} ${b.startTime} ${b.bkashTrxID ?? ""}`.toLowerCase();
                 if (!hay.includes(q)) return false;
             }
             return true;
@@ -97,59 +75,10 @@ export default function BookingsTable({ initialBookings, pitches }) {
         });
     }
 
-    function handleApprove(id) {
-        setActionError("");
-        startTransition(async () => {
-            try {
-                await adminApproveBooking(id);
-                setBookings((prev) =>
-                    prev.map((b) =>
-                        b.id === id ? { ...b, status: "confirmed" } : b
-                    )
-                );
-            } catch (err) {
-                setActionError(err?.message ?? "Failed to approve.");
-            }
-        });
-    }
-
-    function handleReject(id) {
-        setActionError("");
-        startTransition(async () => {
-            try {
-                await adminRejectBooking(id);
-                setBookings((prev) =>
-                    prev.map((b) =>
-                        b.id === id ? { ...b, status: "cancelled" } : b
-                    )
-                );
-            } catch (err) {
-                setActionError(err?.message ?? "Failed to reject.");
-            }
-        });
-    }
-
-    function handleMarkPaid(id) {
-        setActionError("");
-        startTransition(async () => {
-            try {
-                await adminMarkPaid(id);
-                setBookings((prev) =>
-                    prev.map((b) =>
-                        b.id === id ? { ...b, paymentStatus: "paid" } : b
-                    )
-                );
-            } catch (err) {
-                setActionError(err?.message ?? "Failed to mark paid.");
-            }
-        });
-    }
-
     const hasFilters = search || pitchFilter || statusFilter;
 
     return (
         <div className="space-y-4">
-            {/* Filters */}
             <div className="flex flex-wrap items-center gap-3 rounded-3xl border border-ink-200 bg-white p-4 shadow-sm">
                 <div className="relative min-w-[200px] flex-1">
                     <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
@@ -157,7 +86,7 @@ export default function BookingsTable({ initialBookings, pitches }) {
                         type="text"
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
-                        placeholder="Search by user, pitch, date…"
+                        placeholder="Search by user, pitch, TrxID…"
                         className="w-full rounded-xl border border-ink-200 bg-white py-2.5 pl-9 pr-3 text-sm text-ink-900 placeholder:text-ink-400 focus:border-turf-400 focus:outline-none focus:ring-2 focus:ring-turf-100"
                     />
                 </div>
@@ -182,6 +111,7 @@ export default function BookingsTable({ initialBookings, pitches }) {
                 >
                     <option value="">All statuses</option>
                     <option value="confirmed">Confirmed</option>
+                    <option value="pending">Pending</option>
                     <option value="cancelled">Cancelled</option>
                 </select>
 
@@ -207,7 +137,6 @@ export default function BookingsTable({ initialBookings, pitches }) {
                 </div>
             )}
 
-            {/* Table */}
             <div className="overflow-hidden rounded-3xl border border-ink-200 bg-white shadow-sm">
                 <div className="overflow-x-auto">
                     <table className="w-full text-sm">
@@ -235,7 +164,7 @@ export default function BookingsTable({ initialBookings, pitches }) {
                                     >
                                         <td className="whitespace-nowrap px-4 py-3">
                                             <p className="font-bold text-ink-900">
-                                                {b.startTime} – {b.endTime}
+                                                {format12h(b.startTime)} – {format12h(b.endTime)}
                                             </p>
                                             <p className="text-xs text-ink-500">
                                                 {format(new Date(b.bookingDate), "EEE, MMM d")}
@@ -253,64 +182,33 @@ export default function BookingsTable({ initialBookings, pitches }) {
                                             </p>
                                         </td>
                                         <td className="px-4 py-3">
-                                            <PaymentBadge
-                                                method={b.paymentMethod}
-                                                status={b.paymentStatus}
-                                            />
+                                            <span className="inline-flex items-center gap-1 rounded-full bg-pink-50 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-pink-700">
+                                                <Smartphone className="h-3 w-3" />
+                                                bKash
+                                            </span>
+                                            {b.bkashTrxID && (
+                                                <p className="mt-1 font-mono text-[10px] text-ink-500">
+                                                    {b.bkashTrxID}
+                                                </p>
+                                            )}
                                         </td>
                                         <td className="px-4 py-3">
                                             <StatusBadge status={b.status} />
                                         </td>
                                         <td className="whitespace-nowrap px-4 py-3 text-right font-extrabold text-turf-700">
-                                            {formatINR(b.totalPrice)}
+                                            {formatBDT(b.totalPrice)}
                                         </td>
                                         <td className="whitespace-nowrap px-4 py-3 text-right">
-                                            <div className="flex items-center justify-end gap-1.5">
-                                                {b.status === "pending" &&
-                                                    b.paymentMethod === "cash" && (
-                                                        <>
-                                                            <button
-                                                                onClick={() => handleApprove(b.id)}
-                                                                disabled={isPending}
-                                                                title="Approve"
-                                                                className="rounded-lg border border-turf-200 bg-turf-50 p-2 text-turf-700 transition-colors hover:bg-turf-100 disabled:opacity-50"
-                                                            >
-                                                                <CheckCircle2 className="h-4 w-4" />
-                                                            </button>
-                                                            <button
-                                                                onClick={() => handleReject(b.id)}
-                                                                disabled={isPending}
-                                                                title="Reject"
-                                                                className="rounded-lg border border-red-200 bg-red-50 p-2 text-red-600 transition-colors hover:bg-red-100 disabled:opacity-50"
-                                                            >
-                                                                <XCircle className="h-4 w-4" />
-                                                            </button>
-                                                        </>
-                                                    )}
-
-                                                {b.paymentStatus !== "paid" &&
-                                                    b.status !== "cancelled" &&
-                                                    b.paymentMethod !== "bkash" && (
-                                                        <button
-                                                            onClick={() => handleMarkPaid(b.id)}
-                                                            disabled={isPending}
-                                                            title="Mark as paid"
-                                                            className="rounded-lg border border-ink-200 bg-white p-2 text-turf-600 transition-colors hover:border-turf-300 hover:bg-turf-50 disabled:opacity-50"
-                                                        >
-                                                            <CheckCircle2 className="h-4 w-4" />
-                                                        </button>
-                                                    )}
-                                                {b.status !== "cancelled" && (
-                                                    <button
-                                                        onClick={() => handleCancel(b.id)}
-                                                        disabled={isPending}
-                                                        title="Cancel booking"
-                                                        className="rounded-lg border border-ink-200 bg-white p-2 text-red-600 transition-colors hover:border-red-200 hover:bg-red-50 disabled:opacity-50"
-                                                    >
-                                                        <XCircle className="h-4 w-4" />
-                                                    </button>
-                                                )}
-                                            </div>
+                                            {b.status !== "cancelled" && (
+                                                <button
+                                                    onClick={() => handleCancel(b.id)}
+                                                    disabled={isPending}
+                                                    title="Cancel booking"
+                                                    className="rounded-lg border border-ink-200 bg-white p-2 text-red-600 transition-colors hover:border-red-200 hover:bg-red-50 disabled:opacity-50"
+                                                >
+                                                    <XCircle className="h-4 w-4" />
+                                                </button>
+                                            )}
                                         </td>
                                     </motion.tr>
                                 ))}

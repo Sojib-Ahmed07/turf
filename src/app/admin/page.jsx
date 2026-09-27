@@ -1,6 +1,7 @@
 // src/app/admin/page.jsx
 import Link from "next/link";
 import { format } from "date-fns";
+import { format12h } from "@/lib/time";
 import {
     CalendarDays,
     TrendingUp,
@@ -8,23 +9,16 @@ import {
     Activity,
     ArrowRight,
     Clock,
-    Wallet,
     Smartphone,
 } from "lucide-react";
-import {
-    getDashboardStats,
-    getTodayBookings,
-    getPendingBookings,
-} from "@/app/actions/admin";
-import PendingApprovals from "./_components/PendingApprovals";
-
+import { getDashboardStats, getTodayBookings } from "@/app/actions/admin";
 
 export const dynamic = "force-dynamic";
 
-function formatINR(value) {
+function formatBDT(value) {
     const n = Number(value);
-    if (!n) return "₹0";
-    return `₹${n.toLocaleString("en-IN")}`;
+    if (!n) return "৳0";
+    return `৳${n.toLocaleString("en-IN")}`;
 }
 
 function StatCard({ icon: Icon, label, value, sub, accent = "turf" }) {
@@ -56,17 +50,15 @@ function StatCard({ icon: Icon, label, value, sub, accent = "turf" }) {
 }
 
 export default async function AdminOverview() {
-    const [stats, todayBookings, pending] = await Promise.all([
+    const [stats, todayBookings] = await Promise.all([
         getDashboardStats(),
         getTodayBookings(),
-        getPendingBookings(),
     ]);
 
     const today = format(new Date(), "EEEE, MMM d");
 
     return (
         <div className="space-y-6">
-            {/* Header */}
             <div>
                 <span className="inline-flex items-center gap-2 rounded-full border border-turf-200 bg-white px-4 py-1.5 text-xs font-semibold uppercase tracking-wider text-turf-700">
                     <Activity className="h-3.5 w-3.5" />
@@ -78,7 +70,6 @@ export default async function AdminOverview() {
                 <p className="mt-1 text-sm text-ink-500">{today}</p>
             </div>
 
-            {/* Stats */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 <StatCard
                     icon={CalendarDays}
@@ -90,14 +81,14 @@ export default async function AdminOverview() {
                 <StatCard
                     icon={IndianRupee}
                     label="Today's revenue"
-                    value={formatINR(stats.todayRevenue)}
-                    sub="Confirmed bookings only"
+                    value={formatBDT(stats.todayRevenue)}
+                    sub="Paid bookings only"
                     accent="amber"
                 />
                 <StatCard
                     icon={TrendingUp}
                     label="Last 7 days"
-                    value={formatINR(stats.weekRevenue)}
+                    value={formatBDT(stats.weekRevenue)}
                     sub="Rolling week revenue"
                     accent="blue"
                 />
@@ -105,15 +96,11 @@ export default async function AdminOverview() {
                     icon={Activity}
                     label="Active pitches"
                     value={stats.activePitches}
-                    sub={`${stats.monthRevenue ? formatINR(stats.monthRevenue) + " this month" : "—"}`}
+                    sub={`${stats.monthRevenue ? formatBDT(stats.monthRevenue) + " this month" : "—"}`}
                     accent="pink"
                 />
             </div>
 
-            {/* Pending approvals */}
-            <PendingApprovals initialPending={pending} />
-
-            {/* Today's bookings */}
             <div className="rounded-3xl border border-ink-200 bg-white shadow-sm">
                 <div className="flex items-center justify-between border-b border-ink-100 p-5">
                     <div>
@@ -150,11 +137,11 @@ export default async function AdminOverview() {
                             >
                                 <div className="flex min-w-0 items-center gap-4">
                                     <div className="flex h-11 w-11 shrink-0 flex-col items-center justify-center rounded-xl bg-turf-50 ring-1 ring-turf-100">
-                                        <span className="text-xs font-extrabold text-turf-700">
-                                            {b.startTime}
+                                        <span className="text-[10px] font-extrabold text-turf-700">
+                                            {format12h(b.startTime)}
                                         </span>
                                         <span className="text-[9px] uppercase text-turf-600/70">
-                                            {b.endTime}
+                                            {format12h(b.endTime)}
                                         </span>
                                     </div>
                                     <div className="min-w-0">
@@ -168,19 +155,12 @@ export default async function AdminOverview() {
                                 </div>
 
                                 <div className="flex items-center gap-2">
-                                    {b.paymentMethod === "bkash" ? (
-                                        <span className="inline-flex items-center gap-1 rounded-full bg-pink-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-pink-700">
-                                            <Smartphone className="h-3 w-3" />
-                                            bKash
-                                        </span>
-                                    ) : (
-                                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-amber-700">
-                                            <Wallet className="h-3 w-3" />
-                                            Cash
-                                        </span>
-                                    )}
+                                    <span className="inline-flex items-center gap-1 rounded-full bg-pink-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-pink-700">
+                                        <Smartphone className="h-3 w-3" />
+                                        bKash
+                                    </span>
                                     <span className="text-sm font-extrabold text-turf-700">
-                                        {formatINR(b.totalPrice)}
+                                        {formatBDT(b.totalPrice)}
                                     </span>
                                 </div>
                             </li>

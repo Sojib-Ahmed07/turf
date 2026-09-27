@@ -4,27 +4,22 @@
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { format, addDays, startOfDay } from "date-fns";
 import { motion, AnimatePresence } from "framer-motion";
-import { createBooking } from "@/app/actions/booking";
-import { startBkashBooking } from "@/app/actions/bkash-payment";
 import {
     Calendar as CalendarIcon,
     Clock,
-    Check,
     AlertCircle,
     Loader2,
     MapPin,
     X,
-    Wallet,
     Smartphone,
     ShieldCheck,
+    Moon,
 } from "lucide-react";
-import { generateTimeSlots, toDateKey } from "@/lib/time";
-
-/* -------------------------------------------------------------- */
-/* Helpers                                                         */
-/* -------------------------------------------------------------- */
+import { startBkashBooking } from "@/app/actions/bkash-payment";
+import { generateTimeSlots, toDateKey, format12h } from "@/lib/time";
 
 const DAYS_AHEAD = 30;
+const BOOKING_FEE = 1000;
 
 function buildDateRange() {
     const today = startOfDay(new Date());
@@ -42,15 +37,11 @@ function buildDateRange() {
     return days;
 }
 
-function formatPrice(value) {
+function formatBDT(value) {
     const n = Number(value);
-    if (Number.isNaN(n)) return "₹0";
-    return `₹${n.toFixed(0)}`;
+    if (Number.isNaN(n)) return "৳0";
+    return `৳${n.toFixed(0)}`;
 }
-
-/* -------------------------------------------------------------- */
-/* Component                                                       */
-/* -------------------------------------------------------------- */
 
 export default function BookingClient({ pitches, user }) {
     const [isPending, startTransition] = useTransition();
@@ -63,17 +54,10 @@ export default function BookingClient({ pitches, user }) {
     const [loadingSlots, setLoadingSlots] = useState(false);
     const [error, setError] = useState("");
 
-    // Modal state
-    const [pendingSlot, setPendingSlot] = useState(null); // { startTime, endTime }
-    const [paymentMethod, setPaymentMethod] = useState("cash");
+    const [pendingSlot, setPendingSlot] = useState(null);
     const [modalError, setModalError] = useState("");
-    const [successBooking, setSuccessBooking] = useState(null); // booking object after success
 
     const selectedPitch = pitches.find((p) => p.id === selectedPitchId);
-
-    /* ---------------------------------------------------------- */
-    /* Slots derivation                                           */
-    /* ---------------------------------------------------------- */
 
     const slots = useMemo(() => {
         const today = new Date();
@@ -82,22 +66,21 @@ export default function BookingClient({ pitches, user }) {
         const isToday = selectedDateKey === todayKey;
         const isPastDay = selectedDateKey < todayKey;
 
-        return generateTimeSlots().map(({ startTime, endTime }) => {
+        return generateTimeSlots().map(({ startTime, endTime, crossesMidnight }) => {
             const isBooked = bookedSet.has(startTime);
-            const isPast = isPastDay || (isToday && startTime <= nowKey);
+            const isPast =
+                isPastDay ||
+                (isToday && !crossesMidnight && startTime <= nowKey);
             return {
                 startTime,
                 endTime,
+                crossesMidnight,
                 isBooked,
                 isPast,
                 isBookable: !isBooked && !isPast,
             };
         });
     }, [selectedDateKey, bookedSet]);
-
-    /* ---------------------------------------------------------- */
-    /* Fetch availability                                         */
-    /* ---------------------------------------------------------- */
 
     useEffect(() => {
         if (!selectedPitchId || !selectedDateKey) return;
@@ -134,89 +117,36 @@ export default function BookingClient({ pitches, user }) {
         };
     }, [selectedPitchId, selectedDateKey]);
 
-    async function refreshSlots() {
-        if (!selectedPitchId || !selectedDateKey) return;
-        try {
-            const res = await fetch(
-                `/api/booked-slots?pitchId=${selectedPitchId}&date=${selectedDateKey}`,
-                { cache: "no-store" }
-            );
-            if (!res.ok) return;
-            const data = await res.json();
-            setBookedSet(new Set(data.startTimes ?? []));
-        } catch {
-            /* silent */
-        }
-    }
-
-    /* ---------------------------------------------------------- */
-    /* Modal handlers                                             */
-    /* ---------------------------------------------------------- */
-
     function openModal(slot) {
         setPendingSlot(slot);
-        setPaymentMethod("cash");
         setModalError("");
-        setSuccessBooking(null);
     }
 
     function closeModal() {
-        if (isPending) return; // don't close while submitting
+        if (isPending) return;
         setPendingSlot(null);
         setModalError("");
-        setSuccessBooking(null);
     }
 
     function handleConfirm() {
         if (!pendingSlot || !selectedPitch) return;
         setModalError("");
 
-        const totalPrice = Number(selectedPitch.hourlyRate);
-
         startTransition(async () => {
             try {
-                if (paymentMethod === "bkash") {
-                    // Create pending booking + get bKash redirect URL
-                    const { bkashURL } = await startBkashBooking({
-                        pitchId: selectedPitchId,
-                        bookingDate: selectedDateKey,
-                        startTime: pendingSlot.startTime,
-                        endTime: pendingSlot.endTime,
-                    });
-
-                    // Full-page redirect to bKash
-                    window.location.href = bkashURL;
-                    return;
-                }
-
-                // Cash flow — same as before
-                const booking = await createBooking({
+                const { bkashURL } = await startBkashBooking({
                     pitchId: selectedPitchId,
                     bookingDate: selectedDateKey,
                     startTime: pendingSlot.startTime,
                     endTime: pendingSlot.endTime,
-                    totalPrice,
-                    paymentMethod: "cash",
                 });
-
-                setSuccessBooking({
-                    ...booking,
-                    pitchName: selectedPitch.name,
-                    paymentMethod: "cash",
-                });
-
-                await refreshSlots();
+                window.location.href = bkashURL;
             } catch (err) {
                 console.error(err);
-                setModalError(err?.message ?? "Booking failed. Please try again.");
-                await refreshSlots();
+                setModalError(err?.message ?? "Could not start payment.");
             }
         });
     }
-
-    /* ---------------------------------------------------------- */
-    /* Render                                                     */
-    /* ---------------------------------------------------------- */
 
     return (
         <div className="relative min-h-[calc(100vh-64px)] overflow-hidden bg-ink-50">
@@ -224,7 +154,6 @@ export default function BookingClient({ pitches, user }) {
             <div className="pointer-events-none absolute bottom-0 right-0 h-80 w-80 rounded-full bg-turf-200/30 blur-3xl" />
 
             <div className="relative mx-auto max-w-6xl px-4 py-10 sm:px-6 lg:px-8">
-                {/* Header */}
                 <motion.div
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
@@ -242,7 +171,7 @@ export default function BookingClient({ pitches, user }) {
                         </span>
                     </h1>
                     <p className="mt-2 text-sm text-ink-600 sm:text-base">
-                        Choose a pitch, pick a date, and lock in your hour.
+                        Pay {formatBDT(BOOKING_FEE)} via bKash to lock your 90-minute slot.
                     </p>
                 </motion.div>
 
@@ -254,7 +183,6 @@ export default function BookingClient({ pitches, user }) {
                 )}
 
                 <div className="grid grid-cols-1 gap-6 lg:grid-cols-[320px_1fr]">
-                    {/* Sidebar */}
                     <div className="space-y-6">
                         <div className="rounded-3xl border border-ink-200 bg-white p-5 shadow-sm">
                             <h2 className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-ink-500">
@@ -273,26 +201,14 @@ export default function BookingClient({ pitches, user }) {
                                                     : "border-ink-200 bg-white hover:border-turf-300 hover:bg-turf-50/50"
                                                 }`}
                                         >
-                                            <div className="flex items-center justify-between gap-3">
-                                                <div className="min-w-0">
-                                                    <p className="truncate text-sm font-bold text-ink-900">
-                                                        {p.name}
-                                                    </p>
-                                                    {p.description && (
-                                                        <p className="mt-0.5 truncate text-xs text-ink-500">
-                                                            {p.description}
-                                                        </p>
-                                                    )}
-                                                </div>
-                                                <div className="shrink-0 text-right">
-                                                    <p className="text-sm font-extrabold text-turf-700">
-                                                        {formatPrice(p.hourlyRate)}
-                                                    </p>
-                                                    <p className="text-[10px] uppercase tracking-wider text-ink-400">
-                                                        /hr
-                                                    </p>
-                                                </div>
-                                            </div>
+                                            <p className="truncate text-sm font-bold text-ink-900">
+                                                {p.name}
+                                            </p>
+                                            {p.description && (
+                                                <p className="mt-0.5 truncate text-xs text-ink-500">
+                                                    {p.description}
+                                                </p>
+                                            )}
                                         </button>
                                     );
                                 })}
@@ -335,13 +251,9 @@ export default function BookingClient({ pitches, user }) {
                                     );
                                 })}
                             </div>
-                            <p className="mt-3 text-[11px] text-ink-400">
-                                Showing next 14 days.
-                            </p>
                         </div>
                     </div>
 
-                    {/* Slots */}
                     <div className="rounded-3xl border border-ink-200 bg-white p-5 shadow-sm sm:p-7">
                         <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
                             <div>
@@ -351,8 +263,7 @@ export default function BookingClient({ pitches, user }) {
                                 </h2>
                                 {selectedPitch && (
                                     <p className="mt-0.5 text-sm text-ink-500">
-                                        {selectedPitch.name} ·{" "}
-                                        {formatPrice(selectedPitch.hourlyRate)}/hour
+                                        {selectedPitch.name}
                                     </p>
                                 )}
                             </div>
@@ -364,13 +275,12 @@ export default function BookingClient({ pitches, user }) {
                             )}
                         </div>
 
-                        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4">
+                        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
                             {slots.map((slot) => {
-                                const disabled =
-                                    !slot.isBookable || loadingSlots;
+                                const disabled = !slot.isBookable || loadingSlots;
 
                                 const base =
-                                    "group relative flex flex-col items-center justify-center rounded-2xl border px-3 py-3 transition-all";
+                                    "group relative flex flex-col items-start justify-center rounded-2xl border px-3.5 py-3 text-left transition-all";
 
                                 let cls =
                                     "border-ink-200 bg-white text-ink-700 hover:border-turf-400 hover:bg-turf-50 hover:shadow-sm";
@@ -391,28 +301,35 @@ export default function BookingClient({ pitches, user }) {
                                         onClick={() => openModal(slot)}
                                         className={`${base} ${cls}`}
                                     >
-                                        <span className="text-sm font-bold">
-                                            {slot.startTime}
-                                        </span>
-                                        <span className="text-[10px] uppercase tracking-wider opacity-70">
-                                            {slot.endTime}
-                                        </span>
+                                        <div className="flex w-full items-center justify-between gap-2">
+                                            <span className="text-sm font-bold">
+                                                {format12h(slot.startTime)} – {format12h(slot.endTime)}
+                                            </span>
+                                            {slot.crossesMidnight && (
+                                                <Moon className="h-3.5 w-3.5 opacity-60" />
+                                            )}
+                                        </div>
 
-                                        {slot.isBooked && (
-                                            <span className="mt-1 text-[10px] font-bold uppercase tracking-wider">
-                                                Booked
+                                        <div className="mt-1 flex w-full items-center justify-between">
+                                            {slot.isBooked && (
+                                                <span className="text-[10px] font-bold uppercase tracking-wider">
+                                                    Booked
+                                                </span>
+                                            )}
+                                            {slot.isPast && !slot.isBooked && (
+                                                <span className="text-[10px] font-bold uppercase tracking-wider">
+                                                    Past
+                                                </span>
+                                            )}
+                                            {slot.isBookable && (
+                                                <span className="text-[10px] font-bold uppercase tracking-wider text-turf-600 opacity-0 transition-opacity group-hover:opacity-100">
+                                                    Book →
+                                                </span>
+                                            )}
+                                            <span className="text-[10px] font-bold text-turf-700">
+                                                {formatBDT(BOOKING_FEE)}
                                             </span>
-                                        )}
-                                        {slot.isPast && !slot.isBooked && (
-                                            <span className="mt-1 text-[10px] font-bold uppercase tracking-wider">
-                                                Past
-                                            </span>
-                                        )}
-                                        {slot.isBookable && (
-                                            <span className="mt-1 text-[10px] font-bold uppercase tracking-wider text-turf-600 opacity-0 transition-opacity group-hover:opacity-100">
-                                                Book →
-                                            </span>
-                                        )}
+                                        </div>
                                     </button>
                                 );
                             })}
@@ -431,12 +348,15 @@ export default function BookingClient({ pitches, user }) {
                                 className="border border-ink-100 bg-ink-50"
                                 label="Past"
                             />
+                            <span className="inline-flex items-center gap-1.5">
+                                <Moon className="h-3 w-3 text-ink-400" />
+                                Crosses midnight
+                            </span>
                         </div>
                     </div>
                 </div>
             </div>
 
-            {/* ---------------- Booking Modal ---------------- */}
             <AnimatePresence>
                 {pendingSlot && selectedPitch && (
                     <motion.div
@@ -456,168 +376,102 @@ export default function BookingClient({ pitches, user }) {
                             onClick={(e) => e.stopPropagation()}
                             className="w-full max-w-lg overflow-hidden rounded-t-3xl border border-ink-200 bg-white shadow-2xl sm:rounded-3xl"
                         >
-                            {successBooking ? (
-                                /* ---------- Success state ---------- */
-                                <div className="p-6 sm:p-8">
-                                    <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-turf-100">
-                                        <Check className="h-7 w-7 text-turf-600" />
-                                    </div>
-                                    <h2 className="mt-5 text-center text-xl font-extrabold text-ink-900">
-                                        Booking received!
+                            <div className="flex items-start justify-between border-b border-ink-100 p-5 sm:p-6">
+                                <div>
+                                    <h2 className="text-lg font-extrabold text-ink-900">
+                                        Confirm your booking
                                     </h2>
-                                    <p className="mt-1 text-center text-sm text-ink-500">
-                                        We&apos;ll confirm your slot once the admin approves
-                                        your cash-on-arrival booking.
+                                    <p className="mt-0.5 text-sm text-ink-500">
+                                        Pay {formatBDT(BOOKING_FEE)} via bKash to confirm.
                                     </p>
-
-                                    <div className="mt-6 rounded-2xl border border-ink-100 bg-ink-50 p-4 text-sm">
-                                        <Row label="Pitch" value={successBooking.pitchName} />
-                                        <Row
-                                            label="Date"
-                                            value={format(
-                                                new Date(successBooking.bookingDate),
-                                                "EEE, MMM d, yyyy"
-                                            )}
-                                        />
-                                        <Row
-                                            label="Time"
-                                            value={`${successBooking.startTime} – ${successBooking.endTime}`}
-                                        />
-                                        <Row
-                                            label="Payment"
-                                            value={
-                                                successBooking.paymentMethod === "bkash"
-                                                    ? "bKash"
-                                                    : "Cash on arrival"
-                                            }
-                                        />
-                                        <Row
-                                            label="Total"
-                                            value={formatPrice(successBooking.totalPrice)}
-                                            highlight
-                                        />
-                                    </div>
-
-                                    <button
-                                        onClick={closeModal}
-                                        className="mt-6 w-full rounded-2xl bg-gradient-to-r from-turf-500 to-turf-600 px-6 py-3.5 text-sm font-bold text-white shadow-glow transition-all hover:from-turf-400 hover:to-turf-500 active:scale-[0.98]"
-                                    >
-                                        Done
-                                    </button>
                                 </div>
-                            ) : (
-                                /* ---------- Confirm state ---------- */
-                                <>
-                                    <div className="flex items-start justify-between border-b border-ink-100 p-5 sm:p-6">
-                                        <div>
-                                            <h2 className="text-lg font-extrabold text-ink-900">
-                                                Confirm your booking
-                                            </h2>
-                                            <p className="mt-0.5 text-sm text-ink-500">
-                                                Review and choose how you&apos;ll pay.
-                                            </p>
-                                        </div>
-                                        <button
-                                            onClick={closeModal}
-                                            disabled={isPending}
-                                            className="rounded-lg p-1.5 text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700 disabled:opacity-50"
-                                            aria-label="Close"
-                                        >
-                                            <X className="h-5 w-5" />
-                                        </button>
-                                    </div>
+                                <button
+                                    onClick={closeModal}
+                                    disabled={isPending}
+                                    className="rounded-lg p-1.5 text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700 disabled:opacity-50"
+                                    aria-label="Close"
+                                >
+                                    <X className="h-5 w-5" />
+                                </button>
+                            </div>
 
-                                    <div className="space-y-5 p-5 sm:p-6">
-                                        {/* Summary */}
-                                        <div className="rounded-2xl border border-ink-100 bg-ink-50 p-4 text-sm">
-                                            <Row label="Pitch" value={selectedPitch.name} />
-                                            <Row
-                                                label="Date"
-                                                value={format(
-                                                    new Date(selectedDateKey),
-                                                    "EEE, MMM d, yyyy"
-                                                )}
-                                            />
-                                            <Row
-                                                label="Time"
-                                                value={`${pendingSlot.startTime} – ${pendingSlot.endTime}`}
-                                            />
-                                            <Row
-                                                label="Total"
-                                                value={formatPrice(selectedPitch.hourlyRate)}
-                                                highlight
-                                            />
-                                        </div>
-
-                                        {/* Payment method */}
-                                        <div>
-                                            <p className="mb-2 text-xs font-bold uppercase tracking-wider text-ink-500">
-                                                Payment method
-                                            </p>
-                                            <div className="grid grid-cols-2 gap-3">
-                                                <PaymentOption
-                                                    icon={Wallet}
-                                                    title="Cash on arrival"
-                                                    subtitle="Pay at the turf"
-                                                    selected={paymentMethod === "cash"}
-                                                    onClick={() => setPaymentMethod("cash")}
-                                                />
-                                                <PaymentOption
-                                                    icon={Smartphone}
-                                                    title="bKash"
-                                                    subtitle="Send money online"
-                                                    selected={paymentMethod === "bkash"}
-                                                    onClick={() => setPaymentMethod("bkash")}
-                                                />
-                                            </div>
-                                        </div>
-
-                                        {paymentMethod === "bkash" && (
-                                            <div className="rounded-xl border border-turf-200 bg-turf-50 p-3 text-xs text-turf-700">
-                                                You&apos;ll receive a bKash payment request on your
-                                                registered number. Your slot is held until payment
-                                                is confirmed.
-                                            </div>
+                            <div className="space-y-5 p-5 sm:p-6">
+                                <div className="rounded-2xl border border-ink-100 bg-ink-50 p-4 text-sm">
+                                    <Row label="Pitch" value={selectedPitch.name} />
+                                    <Row
+                                        label="Date"
+                                        value={format(
+                                            new Date(selectedDateKey),
+                                            "EEE, MMM d, yyyy"
                                         )}
+                                    />
+                                    <Row
+                                        label="Time"
+                                        value={`${format12h(pendingSlot.startTime)} – ${format12h(pendingSlot.endTime)}`}
+                                    />
+                                    {pendingSlot.crossesMidnight && (
+                                        <Row label="Note" value="Ends after midnight" />
+                                    )}
+                                    <Row
+                                        label="Total"
+                                        value={formatBDT(BOOKING_FEE)}
+                                        highlight
+                                    />
+                                </div>
 
-                                        {modalError && (
-                                            <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                                                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                                                <span>{modalError}</span>
-                                            </div>
-                                        )}
-
-                                        <div className="flex items-center gap-2 text-[11px] text-ink-400">
-                                            <ShieldCheck className="h-3.5 w-3.5 text-turf-500" />
-                                            Free cancellation up to 2 hours before your slot.
-                                        </div>
+                                <div className="flex items-center gap-3 rounded-2xl border border-pink-200 bg-pink-50 p-4">
+                                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-pink-500 text-white">
+                                        <Smartphone className="h-4 w-4" />
                                     </div>
-
-                                    <div className="flex gap-3 border-t border-ink-100 p-5 sm:p-6">
-                                        <button
-                                            onClick={closeModal}
-                                            disabled={isPending}
-                                            className="flex-1 rounded-2xl border border-ink-200 bg-white px-5 py-3 text-sm font-bold text-ink-700 transition-colors hover:bg-ink-50 disabled:opacity-60"
-                                        >
-                                            Cancel
-                                        </button>
-                                        <button
-                                            onClick={handleConfirm}
-                                            disabled={isPending}
-                                            className="flex flex-[1.4] items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-turf-500 to-turf-600 px-5 py-3 text-sm font-bold text-white shadow-glow transition-all hover:from-turf-400 hover:to-turf-500 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70"
-                                        >
-                                            {isPending ? (
-                                                <>
-                                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                                    Booking…
-                                                </>
-                                            ) : (
-                                                "Confirm booking"
-                                            )}
-                                        </button>
+                                    <div className="min-w-0">
+                                        <p className="text-sm font-bold text-ink-900">
+                                            bKash
+                                        </p>
+                                        <p className="text-[11px] text-ink-500">
+                                            You&apos;ll be redirected to complete the payment.
+                                        </p>
                                     </div>
-                                </>
-                            )}
+                                </div>
+
+                                {modalError && (
+                                    <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                                        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                                        <span>{modalError}</span>
+                                    </div>
+                                )}
+
+                                <div className="flex items-center gap-2 text-[11px] text-ink-400">
+                                    <ShieldCheck className="h-3.5 w-3.5 text-turf-500" />
+                                    Secure payment powered by bKash.
+                                </div>
+                            </div>
+
+                            <div className="flex gap-3 border-t border-ink-100 p-5 sm:p-6">
+                                <button
+                                    onClick={closeModal}
+                                    disabled={isPending}
+                                    className="flex-1 rounded-2xl border border-ink-200 bg-white px-5 py-3 text-sm font-bold text-ink-700 transition-colors hover:bg-ink-50 disabled:opacity-60"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={handleConfirm}
+                                    disabled={isPending}
+                                    className="flex flex-[1.4] items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-pink-500 to-pink-600 px-5 py-3 text-sm font-bold text-white shadow-glow transition-all hover:from-pink-400 hover:to-pink-500 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70"
+                                >
+                                    {isPending ? (
+                                        <>
+                                            <Loader2 className="h-4 w-4 animate-spin" />
+                                            Redirecting…
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Smartphone className="h-4 w-4" />
+                                            Pay {formatBDT(BOOKING_FEE)} with bKash
+                                        </>
+                                    )}
+                                </button>
+                            </div>
                         </motion.div>
                     </motion.div>
                 )}
@@ -625,10 +479,6 @@ export default function BookingClient({ pitches, user }) {
         </div>
     );
 }
-
-/* -------------------------------------------------------------- */
-/* Small subcomponents                                            */
-/* -------------------------------------------------------------- */
 
 function Row({ label, value, highlight = false }) {
     return (
@@ -644,32 +494,6 @@ function Row({ label, value, highlight = false }) {
                 {value}
             </span>
         </div>
-    );
-}
-
-function PaymentOption({ icon: Icon, title, subtitle, selected, onClick }) {
-    return (
-        <button
-            type="button"
-            onClick={onClick}
-            className={`flex flex-col items-start gap-2 rounded-2xl border p-4 text-left transition-all ${selected
-                    ? "border-turf-400 bg-turf-50 ring-2 ring-turf-200"
-                    : "border-ink-200 bg-white hover:border-turf-300 hover:bg-turf-50/50"
-                }`}
-        >
-            <div
-                className={`flex h-9 w-9 items-center justify-center rounded-xl ${selected
-                        ? "bg-turf-500 text-white"
-                        : "bg-ink-100 text-ink-600"
-                    }`}
-            >
-                <Icon className="h-4.5 w-4.5" />
-            </div>
-            <div>
-                <p className="text-sm font-bold text-ink-900">{title}</p>
-                <p className="text-[11px] text-ink-500">{subtitle}</p>
-            </div>
-        </button>
     );
 }
 

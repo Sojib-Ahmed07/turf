@@ -10,14 +10,6 @@ import { and, eq, desc, gte, lte, sql, ne } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
 /* -------------------------------------------------------------- */
-/* Constants (kept inside functions, since "use server" files     */
-/* may only export async functions)                               */
-/* -------------------------------------------------------------- */
-
-const OPEN_HOUR = 6;
-const CLOSE_HOUR = 23;
-
-/* -------------------------------------------------------------- */
 /* Guard                                                           */
 /* -------------------------------------------------------------- */
 
@@ -111,7 +103,7 @@ export async function getDashboardStats() {
     const monthRevenue = Number(monthRows[0]?.revenue ?? 0);
     const pitchCount = Number(activePitches[0]?.count ?? 0);
 
-    const SLOTS_PER_DAY = CLOSE_HOUR - OPEN_HOUR; // 17
+    const SLOTS_PER_DAY = 14; // 90-min slots from 6 AM → 1:30 AM
     const totalSlotsToday = pitchCount * SLOTS_PER_DAY;
     const occupancy =
         totalSlotsToday === 0
@@ -151,6 +143,7 @@ export async function getAllBookings({ dateFrom, dateTo, pitchId, status } = {})
             status: bookings.status,
             paymentMethod: bookings.paymentMethod,
             paymentStatus: bookings.paymentStatus,
+            bkashTrxID: bookings.bkashTrxID,
             createdAt: bookings.createdAt,
             pitchId: bookings.pitchId,
             pitchName: pitches.name,
@@ -188,19 +181,6 @@ export async function adminCancelBooking(bookingId) {
     await db
         .update(bookings)
         .set({ status: "cancelled" })
-        .where(eq(bookings.id, bookingId));
-
-    revalidatePath("/admin");
-    revalidatePath("/admin/bookings");
-    return { ok: true };
-}
-
-export async function adminMarkPaid(bookingId) {
-    await requireAdmin();
-
-    await db
-        .update(bookings)
-        .set({ paymentStatus: "paid" })
         .where(eq(bookings.id, bookingId));
 
     revalidatePath("/admin");
@@ -285,68 +265,4 @@ export async function upsertPitch({
 
     revalidatePath("/admin/pitches");
     return { ok: true };
-}
-
-/* -------------------------------------------------------------- */
-/* Booking approval                                                */
-/* -------------------------------------------------------------- */
-
-export async function adminApproveBooking(bookingId) {
-    await requireAdmin();
-
-    await db
-        .update(bookings)
-        .set({ status: "confirmed" })
-        .where(eq(bookings.id, bookingId));
-
-    revalidatePath("/admin");
-    revalidatePath("/admin/bookings");
-    return { ok: true };
-}
-
-export async function adminRejectBooking(bookingId) {
-    await requireAdmin();
-
-    await db
-        .update(bookings)
-        .set({ status: "cancelled" })
-        .where(eq(bookings.id, bookingId));
-
-    revalidatePath("/admin");
-    revalidatePath("/admin/bookings");
-    return { ok: true };
-}
-
-export async function getPendingBookings() {
-    await requireAdmin();
-
-    const rows = await db
-        .select({
-            id: bookings.id,
-            bookingDate: bookings.bookingDate,
-            startTime: bookings.startTime,
-            endTime: bookings.endTime,
-            totalPrice: bookings.totalPrice,
-            status: bookings.status,
-            paymentMethod: bookings.paymentMethod,
-            paymentStatus: bookings.paymentStatus,
-            createdAt: bookings.createdAt,
-            pitchId: bookings.pitchId,
-            pitchName: pitches.name,
-            userId: bookings.userId,
-            userName: user.name,
-            userEmail: user.email,
-        })
-        .from(bookings)
-        .innerJoin(pitches, eq(bookings.pitchId, pitches.id))
-        .innerJoin(user, eq(bookings.userId, user.id))
-        .where(eq(bookings.status, "pending"))
-        .orderBy(desc(bookings.createdAt))
-        .limit(50);
-
-    return rows.map((r) => ({
-        ...r,
-        totalPrice: String(r.totalPrice),
-        createdAt: r.createdAt?.toISOString?.() ?? null,
-    }));
 }

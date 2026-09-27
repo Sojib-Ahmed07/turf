@@ -9,10 +9,11 @@ import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { createBkashPayment, executeBkashPayment } from "@/lib/bkash";
 
+/** Flat booking fee in BDT */
+const BOOKING_FEE = 1000;
+
 /**
- * Called from the booking modal when the user picks bKash.
- * Creates the booking (pending) + starts a bKash payment session.
- * Returns { bkashURL } for the browser to redirect to.
+ * Create a pending booking and start a bKash payment session.
  */
 export async function startBkashBooking({
     pitchId,
@@ -23,7 +24,7 @@ export async function startBkashBooking({
     const session = await auth.api.getSession({ headers: await headers() });
     if (!session?.user) throw new Error("Unauthorized");
 
-    // Validate slot & compute price server-side (don't trust the client)
+    // Validate pitch
     const [pitch] = await db
         .select()
         .from(pitches)
@@ -31,8 +32,6 @@ export async function startBkashBooking({
         .limit(1);
 
     if (!pitch) throw new Error("Pitch not found or inactive.");
-
-    const amount = Number(pitch.hourlyRate);
 
     // Reject past slots
     const today = new Date();
@@ -61,7 +60,7 @@ export async function startBkashBooking({
     );
     if (hasOverlap) throw new Error("This slot is already booked.");
 
-    // Insert pending booking
+    // Create pending booking
     let booking;
     try {
         const [row] = await db
@@ -72,7 +71,7 @@ export async function startBkashBooking({
                 bookingDate,
                 startTime,
                 endTime,
-                totalPrice: String(amount),
+                totalPrice: String(BOOKING_FEE),
                 status: "pending",
                 paymentMethod: "bkash",
                 paymentStatus: "pending",
@@ -89,20 +88,19 @@ export async function startBkashBooking({
         throw err;
     }
 
-    // Start bKash payment
-    const origin =
-        process.env.BETTER_AUTH_URL || "http://localhost:3000";
+    // Start bKash
+    const origin = process.env.BETTER_AUTH_URL || "http://localhost:3000";
     const callbackURL = `${origin}/api/bkash/callback?bookingId=${booking.id}`;
 
     let payment;
     try {
         payment = await createBkashPayment({
-            amount,
+            amount: BOOKING_FEE,
             payerReference: booking.id,
             callbackURL,
         });
     } catch (err) {
-        // Roll back the booking so the slot frees up
+        // Free up slot
         await db
             .update(bookings)
             .set({ status: "cancelled" })
@@ -110,7 +108,6 @@ export async function startBkashBooking({
         throw err;
     }
 
-    // Persist paymentID
     await db
         .update(bookings)
         .set({ bkashPaymentID: payment.paymentID })
@@ -124,8 +121,8 @@ export async function startBkashBooking({
 }
 
 /**
- * Called by the /payment/success page after bKash redirects back.
- * Executes the payment and confirms the booking if successful.
+ * Execute the payment and confirm the booking if successful.
+ * Called from the bKash callback route (NOT from a page render).
  */
 export async function finalizeBkashPayment({ bookingId, paymentID }) {
     const [booking] = await db
@@ -136,7 +133,7 @@ export async function finalizeBkashPayment({ bookingId, paymentID }) {
 
     if (!booking) throw new Error("Booking not found.");
     if (booking.status === "confirmed" && booking.paymentStatus === "paid") {
-        return { ok: true, alreadyFinalized: true };
+        return { ok: true, alreadyFinalized: true, trxID: booking.bkashTrxID };
     }
 
     const result = await executeBkashPayment(paymentID);
@@ -147,7 +144,6 @@ export async function finalizeBkashPayment({ bookingId, paymentID }) {
         (trxStatus === "Completed" || trxStatus === "Success");
 
     if (!isSuccess) {
-        // Payment failed — free the slot
         await db
             .update(bookings)
             .set({ status: "cancelled" })

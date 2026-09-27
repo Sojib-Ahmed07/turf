@@ -26,19 +26,17 @@ export const bookings = pgTable(
         startTime: text("start_time").notNull(),
         endTime: text("end_time").notNull(),
         totalPrice: decimal("total_price", { precision: 10, scale: 2 }).notNull(),
-        // "pending" | "confirmed" | "cancelled"
+        // "pending" (awaiting bkash) | "confirmed" (paid) | "cancelled"
         status: text("status").notNull().default("pending"),
-        // "cash" | "bkash"
-        paymentMethod: text("payment_method").notNull().default("cash"),
-        // "unpaid" | "pending" | "paid"
-        paymentStatus: text("payment_status").notNull().default("unpaid"),
-        // bKash tracking
+        // Always "bkash" now — kept for future extensibility
+        paymentMethod: text("payment_method").notNull().default("bkash"),
+        // "pending" | "paid"
+        paymentStatus: text("payment_status").notNull().default("pending"),
         bkashPaymentID: text("bkash_payment_id"),
         bkashTrxID: text("bkash_trx_id"),
         createdAt: timestamp("created_at").notNull().defaultNow(),
     },
     (table) => ({
-        // Any non-cancelled booking blocks the slot (pending or confirmed)
         uniqueActiveSlot: uniqueIndex("unique_active_slot")
             .on(table.pitchId, table.bookingDate, table.startTime)
             .where(sql`${table.status} <> 'cancelled'`),
