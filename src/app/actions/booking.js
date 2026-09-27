@@ -109,9 +109,11 @@ export async function getMyBookings() {
 /**
  * Create a booking for the currently signed-in user.
  *
- * Race-safety strategy (two layers):
- *   1. JS overlap check — catches multi-slot overlaps (e.g. 06:00-08:00 vs 07:00-08:00).
- *   2. DB partial unique index — catches identical-start-time races across concurrent users.
+ * Payment flow:
+ *   - cash  → status="pending", paymentStatus="unpaid"  (needs admin approval)
+ *   - bkash → status="pending", paymentStatus="pending" (waits for callback)
+ *
+ * Race-safety: JS overlap check + DB partial unique index on non-cancelled rows.
  */
 export async function createBooking({
     pitchId,
@@ -119,13 +121,10 @@ export async function createBooking({
     startTime,
     endTime,
     totalPrice,
-    paymentMethod = "cash", // "cash" | "bkash"
+    paymentMethod = "cash",
 }) {
     // --- 1. Auth check ---
-    const session = await auth.api.getSession({
-        headers: await headers(),
-    });
-
+    const session = await auth.api.getSession({ headers: await headers() });
     if (!session?.user) {
         throw new Error("Unauthorized: Please sign in to book.");
     }
@@ -136,6 +135,9 @@ export async function createBooking({
     }
     if (startTime >= endTime) {
         throw new Error("End time must be after start time.");
+    }
+    if (!["cash", "bkash"].includes(paymentMethod)) {
+        throw new Error("Invalid payment method.");
     }
 
     // --- 3. Reject past slots ---
@@ -162,7 +164,7 @@ export async function createBooking({
         throw new Error("Pitch not found or inactive.");
     }
 
-    // --- 5. JS overlap check (catches multi-slot overlaps) ---
+    // --- 5. JS overlap check ---
     const existing = await db
         .select()
         .from(bookings)
@@ -182,11 +184,9 @@ export async function createBooking({
         throw new Error("This slot is already booked. Please choose another.");
     }
 
-    // --- 6. Insert (race-safe; DB unique index is the final guard) ---
+    // --- 6. Insert ---
     let inserted;
     try {
-        const isBkash = paymentMethod === "bkash";
-
         inserted = await db
             .insert(bookings)
             .values({
@@ -196,9 +196,9 @@ export async function createBooking({
                 startTime,
                 endTime,
                 totalPrice: String(totalPrice),
-                status: "confirmed",
-                paymentMethod: isBkash ? "bkash" : "cash",
-                paymentStatus: isBkash ? "pending" : "unpaid",
+                status: "pending",
+                paymentMethod,
+                paymentStatus: paymentMethod === "bkash" ? "pending" : "unpaid",
             })
             .returning();
     } catch (err) {
@@ -220,9 +220,10 @@ export async function createBooking({
         endTime: inserted[0].endTime,
         totalPrice: String(inserted[0].totalPrice),
         status: inserted[0].status,
+        paymentMethod: inserted[0].paymentMethod,
+        paymentStatus: inserted[0].paymentStatus,
     };
 }
-
 /**
  * Cancel a booking. Only the owner (or an admin) can cancel.
  */

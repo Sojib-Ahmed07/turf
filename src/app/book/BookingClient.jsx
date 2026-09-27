@@ -4,6 +4,8 @@
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { format, addDays, startOfDay } from "date-fns";
 import { motion, AnimatePresence } from "framer-motion";
+import { createBooking } from "@/app/actions/booking";
+import { startBkashBooking } from "@/app/actions/bkash-payment";
 import {
     Calendar as CalendarIcon,
     Clock,
@@ -16,7 +18,6 @@ import {
     Smartphone,
     ShieldCheck,
 } from "lucide-react";
-import { createBooking } from "@/app/actions/booking";
 import { generateTimeSlots, toDateKey } from "@/lib/time";
 
 /* -------------------------------------------------------------- */
@@ -174,19 +175,34 @@ export default function BookingClient({ pitches, user }) {
 
         startTransition(async () => {
             try {
+                if (paymentMethod === "bkash") {
+                    // Create pending booking + get bKash redirect URL
+                    const { bkashURL } = await startBkashBooking({
+                        pitchId: selectedPitchId,
+                        bookingDate: selectedDateKey,
+                        startTime: pendingSlot.startTime,
+                        endTime: pendingSlot.endTime,
+                    });
+
+                    // Full-page redirect to bKash
+                    window.location.href = bkashURL;
+                    return;
+                }
+
+                // Cash flow — same as before
                 const booking = await createBooking({
                     pitchId: selectedPitchId,
                     bookingDate: selectedDateKey,
                     startTime: pendingSlot.startTime,
                     endTime: pendingSlot.endTime,
                     totalPrice,
-                    paymentMethod,
+                    paymentMethod: "cash",
                 });
 
                 setSuccessBooking({
                     ...booking,
                     pitchName: selectedPitch.name,
-                    paymentMethod,
+                    paymentMethod: "cash",
                 });
 
                 await refreshSlots();
@@ -447,12 +463,11 @@ export default function BookingClient({ pitches, user }) {
                                         <Check className="h-7 w-7 text-turf-600" />
                                     </div>
                                     <h2 className="mt-5 text-center text-xl font-extrabold text-ink-900">
-                                        Booking confirmed!
+                                        Booking received!
                                     </h2>
                                     <p className="mt-1 text-center text-sm text-ink-500">
-                                        {successBooking.paymentMethod === "bkash"
-                                            ? "We'll send a bKash payment request shortly."
-                                            : "Please pay cash when you arrive."}
+                                        We&apos;ll confirm your slot once the admin approves
+                                        your cash-on-arrival booking.
                                     </p>
 
                                     <div className="mt-6 rounded-2xl border border-ink-100 bg-ink-50 p-4 text-sm">

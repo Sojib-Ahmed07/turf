@@ -17,6 +17,8 @@ import {
 import {
     adminCancelBooking,
     adminMarkPaid,
+    adminApproveBooking,
+    adminRejectBooking,
 } from "@/app/actions/admin";
 
 function formatINR(v) {
@@ -91,6 +93,38 @@ export default function BookingsTable({ initialBookings, pitches }) {
                 );
             } catch (err) {
                 setActionError(err?.message ?? "Failed to cancel.");
+            }
+        });
+    }
+
+    function handleApprove(id) {
+        setActionError("");
+        startTransition(async () => {
+            try {
+                await adminApproveBooking(id);
+                setBookings((prev) =>
+                    prev.map((b) =>
+                        b.id === id ? { ...b, status: "confirmed" } : b
+                    )
+                );
+            } catch (err) {
+                setActionError(err?.message ?? "Failed to approve.");
+            }
+        });
+    }
+
+    function handleReject(id) {
+        setActionError("");
+        startTransition(async () => {
+            try {
+                await adminRejectBooking(id);
+                setBookings((prev) =>
+                    prev.map((b) =>
+                        b.id === id ? { ...b, status: "cancelled" } : b
+                    )
+                );
+            } catch (err) {
+                setActionError(err?.message ?? "Failed to reject.");
             }
         });
     }
@@ -232,8 +266,31 @@ export default function BookingsTable({ initialBookings, pitches }) {
                                         </td>
                                         <td className="whitespace-nowrap px-4 py-3 text-right">
                                             <div className="flex items-center justify-end gap-1.5">
+                                                {b.status === "pending" &&
+                                                    b.paymentMethod === "cash" && (
+                                                        <>
+                                                            <button
+                                                                onClick={() => handleApprove(b.id)}
+                                                                disabled={isPending}
+                                                                title="Approve"
+                                                                className="rounded-lg border border-turf-200 bg-turf-50 p-2 text-turf-700 transition-colors hover:bg-turf-100 disabled:opacity-50"
+                                                            >
+                                                                <CheckCircle2 className="h-4 w-4" />
+                                                            </button>
+                                                            <button
+                                                                onClick={() => handleReject(b.id)}
+                                                                disabled={isPending}
+                                                                title="Reject"
+                                                                className="rounded-lg border border-red-200 bg-red-50 p-2 text-red-600 transition-colors hover:bg-red-100 disabled:opacity-50"
+                                                            >
+                                                                <XCircle className="h-4 w-4" />
+                                                            </button>
+                                                        </>
+                                                    )}
+
                                                 {b.paymentStatus !== "paid" &&
-                                                    b.status !== "cancelled" && (
+                                                    b.status !== "cancelled" &&
+                                                    b.paymentMethod !== "bkash" && (
                                                         <button
                                                             onClick={() => handleMarkPaid(b.id)}
                                                             disabled={isPending}

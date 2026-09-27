@@ -286,3 +286,67 @@ export async function upsertPitch({
     revalidatePath("/admin/pitches");
     return { ok: true };
 }
+
+/* -------------------------------------------------------------- */
+/* Booking approval                                                */
+/* -------------------------------------------------------------- */
+
+export async function adminApproveBooking(bookingId) {
+    await requireAdmin();
+
+    await db
+        .update(bookings)
+        .set({ status: "confirmed" })
+        .where(eq(bookings.id, bookingId));
+
+    revalidatePath("/admin");
+    revalidatePath("/admin/bookings");
+    return { ok: true };
+}
+
+export async function adminRejectBooking(bookingId) {
+    await requireAdmin();
+
+    await db
+        .update(bookings)
+        .set({ status: "cancelled" })
+        .where(eq(bookings.id, bookingId));
+
+    revalidatePath("/admin");
+    revalidatePath("/admin/bookings");
+    return { ok: true };
+}
+
+export async function getPendingBookings() {
+    await requireAdmin();
+
+    const rows = await db
+        .select({
+            id: bookings.id,
+            bookingDate: bookings.bookingDate,
+            startTime: bookings.startTime,
+            endTime: bookings.endTime,
+            totalPrice: bookings.totalPrice,
+            status: bookings.status,
+            paymentMethod: bookings.paymentMethod,
+            paymentStatus: bookings.paymentStatus,
+            createdAt: bookings.createdAt,
+            pitchId: bookings.pitchId,
+            pitchName: pitches.name,
+            userId: bookings.userId,
+            userName: user.name,
+            userEmail: user.email,
+        })
+        .from(bookings)
+        .innerJoin(pitches, eq(bookings.pitchId, pitches.id))
+        .innerJoin(user, eq(bookings.userId, user.id))
+        .where(eq(bookings.status, "pending"))
+        .orderBy(desc(bookings.createdAt))
+        .limit(50);
+
+    return rows.map((r) => ({
+        ...r,
+        totalPrice: String(r.totalPrice),
+        createdAt: r.createdAt?.toISOString?.() ?? null,
+    }));
+}

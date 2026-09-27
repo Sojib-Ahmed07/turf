@@ -11,7 +11,13 @@ import {
     Wallet,
     Smartphone,
 } from "lucide-react";
-import { getDashboardStats, getTodayBookings } from "@/app/actions/admin";
+import {
+    getDashboardStats,
+    getTodayBookings,
+    getPendingBookings,
+} from "@/app/actions/admin";
+import PendingApprovals from "./_components/PendingApprovals";
+
 
 export const dynamic = "force-dynamic";
 
@@ -50,9 +56,10 @@ function StatCard({ icon: Icon, label, value, sub, accent = "turf" }) {
 }
 
 export default async function AdminOverview() {
-    const [stats, todayBookings] = await Promise.all([
+    const [stats, todayBookings, pending] = await Promise.all([
         getDashboardStats(),
         getTodayBookings(),
+        getPendingBookings(),
     ]);
 
     const today = format(new Date(), "EEEE, MMM d");
@@ -102,6 +109,9 @@ export default async function AdminOverview() {
                     accent="pink"
                 />
             </div>
+
+            {/* Pending approvals */}
+            <PendingApprovals initialPending={pending} />
 
             {/* Today's bookings */}
             <div className="rounded-3xl border border-ink-200 bg-white shadow-sm">
