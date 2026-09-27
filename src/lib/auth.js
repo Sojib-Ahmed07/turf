@@ -10,7 +10,6 @@ export const auth = betterAuth({
         schema: schema,
     }),
 
-    // CRITICAL: Set baseURL so OAuth callback URLs are correct
     baseURL: process.env.BETTER_AUTH_URL || "http://localhost:3000",
 
     emailAndPassword: {
@@ -25,8 +24,20 @@ export const auth = betterAuth({
     },
 
     session: {
-        expiresIn: 60 * 60 * 24 * 7, // 7 days
-        updateAge: 60 * 60 * 24,     // refresh once/day
+        expiresIn: 60 * 60 * 24 * 7,
+        updateAge: 60 * 60 * 24,
+    },
+
+    // ✅ Expose `role` on session.user and session.user.role
+    user: {
+        additionalFields: {
+            role: {
+                type: "string",
+                required: false,
+                defaultValue: "user",
+                input: false, // don't let users set it during signup
+            },
+        },
     },
 
     trustedOrigins: [
