@@ -17,7 +17,6 @@ export async function getPitches() {
             .from(pitches)
             .where(eq(pitches.isActive, true));
 
-        // Serialize decimals to strings for client components
         return rows.map((p) => ({
             id: p.id,
             name: p.name,
@@ -59,8 +58,60 @@ export async function getBookedSlots(pitchId, date) {
 }
 
 /**
+ * Fetch all bookings for the currently signed-in user.
+ */
+export async function getMyBookings() {
+    const session = await auth.api.getSession({
+        headers: await headers(),
+    });
+
+    if (!session?.user) {
+        return [];
+    }
+
+    try {
+        const rows = await db
+            .select({
+                id: bookings.id,
+                pitchId: bookings.pitchId,
+                bookingDate: bookings.bookingDate,
+                startTime: bookings.startTime,
+                endTime: bookings.endTime,
+                totalPrice: bookings.totalPrice,
+                status: bookings.status,
+                createdAt: bookings.createdAt,
+                pitchName: pitches.name,
+                pitchImage: pitches.imageUrl,
+            })
+            .from(bookings)
+            .innerJoin(pitches, eq(bookings.pitchId, pitches.id))
+            .where(eq(bookings.userId, session.user.id))
+            .orderBy(bookings.bookingDate, bookings.startTime);
+
+        return rows.map((r) => ({
+            id: r.id,
+            pitchId: r.pitchId,
+            pitchName: r.pitchName,
+            pitchImage: r.pitchImage ?? null,
+            bookingDate: r.bookingDate,
+            startTime: r.startTime,
+            endTime: r.endTime,
+            totalPrice: String(r.totalPrice),
+            status: r.status,
+            createdAt: r.createdAt,
+        }));
+    } catch (err) {
+        console.error("getMyBookings error:", err);
+        throw new Error("Failed to load your bookings.");
+    }
+}
+
+/**
  * Create a booking for the currently signed-in user.
- * Prevents double-booking via a re-check + insert inside a transaction-like flow.
+ *
+ * Race-safety strategy (two layers):
+ *   1. JS overlap check — catches multi-slot overlaps (e.g. 06:00-08:00 vs 07:00-08:00).
+ *   2. DB partial unique index — catches identical-start-time races across concurrent users.
  */
 export async function createBooking({
     pitchId,
@@ -68,6 +119,7 @@ export async function createBooking({
     startTime,
     endTime,
     totalPrice,
+    paymentMethod = "cash", // "cash" | "bkash"
 }) {
     // --- 1. Auth check ---
     const session = await auth.api.getSession({
@@ -86,7 +138,20 @@ export async function createBooking({
         throw new Error("End time must be after start time.");
     }
 
-    // --- 3. Verify pitch exists & is active ---
+    // --- 3. Reject past slots ---
+    const today = new Date();
+    const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    if (bookingDate < todayKey) {
+        throw new Error("Cannot book a slot in the past.");
+    }
+    if (bookingDate === todayKey) {
+        const nowKey = `${String(today.getHours()).padStart(2, "0")}:${String(today.getMinutes()).padStart(2, "0")}`;
+        if (startTime <= nowKey) {
+            throw new Error("This slot has already passed.");
+        }
+    }
+
+    // --- 4. Verify pitch exists & is active ---
     const pitchRows = await db
         .select()
         .from(pitches)
@@ -97,7 +162,7 @@ export async function createBooking({
         throw new Error("Pitch not found or inactive.");
     }
 
-    // --- 4. Conflict check (with all overlapping intervals) ---
+    // --- 5. JS overlap check (catches multi-slot overlaps) ---
     const existing = await db
         .select()
         .from(bookings)
@@ -117,20 +182,35 @@ export async function createBooking({
         throw new Error("This slot is already booked. Please choose another.");
     }
 
-    // --- 5. Insert ---
-    const inserted = await db
-        .insert(bookings)
-        .values({
-            id: crypto.randomUUID(),
-            userId: session.user.id,
-            pitchId,
-            bookingDate,
-            startTime,
-            endTime,
-            totalPrice: String(totalPrice),
-            status: "confirmed",
-        })
-        .returning();
+    // --- 6. Insert (race-safe; DB unique index is the final guard) ---
+    let inserted;
+    try {
+        const isBkash = paymentMethod === "bkash";
+
+        inserted = await db
+            .insert(bookings)
+            .values({
+                userId: session.user.id,
+                pitchId,
+                bookingDate,
+                startTime,
+                endTime,
+                totalPrice: String(totalPrice),
+                status: "confirmed",
+                paymentMethod: isBkash ? "bkash" : "cash",
+                paymentStatus: isBkash ? "pending" : "unpaid",
+            })
+            .returning();
+    } catch (err) {
+        const code = err?.code ?? err?.cause?.code;
+        if (code === "23505") {
+            throw new Error(
+                "This slot was just booked by someone else. Please choose another."
+            );
+        }
+        console.error("createBooking insert error:", err);
+        throw new Error("Failed to create booking. Please try again.");
+    }
 
     return {
         id: inserted[0].id,
@@ -141,4 +221,42 @@ export async function createBooking({
         totalPrice: String(inserted[0].totalPrice),
         status: inserted[0].status,
     };
+}
+
+/**
+ * Cancel a booking. Only the owner (or an admin) can cancel.
+ */
+export async function cancelBooking(bookingId) {
+    const session = await auth.api.getSession({
+        headers: await headers(),
+    });
+
+    if (!session?.user) {
+        throw new Error("Unauthorized: Please sign in.");
+    }
+
+    const rows = await db
+        .select()
+        .from(bookings)
+        .where(eq(bookings.id, bookingId))
+        .limit(1);
+
+    if (rows.length === 0) {
+        throw new Error("Booking not found.");
+    }
+
+    const booking = rows[0];
+    const isOwner = booking.userId === session.user.id;
+    const isAdmin = session.user.role === "admin";
+
+    if (!isOwner && !isAdmin) {
+        throw new Error("You are not allowed to cancel this booking.");
+    }
+
+    await db
+        .update(bookings)
+        .set({ status: "cancelled" })
+        .where(eq(bookings.id, bookingId));
+
+    return { id: bookingId, status: "cancelled" };
 }
