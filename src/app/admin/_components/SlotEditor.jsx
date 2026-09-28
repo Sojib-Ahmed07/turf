@@ -13,29 +13,51 @@ import {
     RefreshCw,
     Save,
     Clock,
-    Coffee,
-    Lock,
-    Unlock,
+    RotateCcw,
+    Copy,
 } from "lucide-react";
 import {
-    getPitchBlocks,
-    replacePitchBlocks,
-    regeneratePitchBlocks,
+    getPitchBlocksEditorData,
+    replaceDefaultBlocks,
+    replaceDateBlocks,
+    resetDateToDefault,
+    regenerateDefaultBlocks,
+    seedDateFromDefault,
 } from "@/app/actions/admin";
 import {
     applyResize,
     deleteBlock,
-    convertToGap,
-    convertToBookable,
     minutesBetween,
     format12h,
     deriveHours,
 } from "@/lib/slots";
 
-function formatBDT(v) {
-    const n = Number(v);
-    if (!n) return "৳0";
-    return `৳${n.toFixed(0)}`;
+/* ---- date label helpers ---- */
+
+function formatDayLabel(dateKey) {
+    const d = new Date(dateKey + "T00:00:00");
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const dayAfter = new Date(today);
+    dayAfter.setDate(dayAfter.getDate() + 2);
+
+    const same = (a, b) =>
+        a.getFullYear() === b.getFullYear() &&
+        a.getMonth() === b.getMonth() &&
+        a.getDate() === b.getDate();
+
+    const short = d.toLocaleDateString("en-GB", {
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+    });
+
+    if (same(d, today)) return `Today · ${short}`;
+    if (same(d, tomorrow)) return `Tomorrow · ${short}`;
+    if (same(d, dayAfter)) return `Day after · ${short}`;
+    return short;
 }
 
 export default function SlotEditor({ pitchId, onClose }) {
@@ -44,17 +66,20 @@ export default function SlotEditor({ pitchId, onClose }) {
     const [error, setError] = useState("");
     const [note, setNote] = useState("");
     const [meta, setMeta] = useState(null);
-    const [blocks, setBlocks] = useState([]);
+    const [defaultBlocks, setDefaultBlocks] = useState([]);
+    const [days, setDays] = useState([]);
+    const [activeTab, setActiveTab] = useState("default"); // "default" or a dateKey
 
     useEffect(() => {
         let cancelled = false;
         (async () => {
             setLoading(true);
             try {
-                const res = await getPitchBlocks(pitchId);
+                const res = await getPitchBlocksEditorData(pitchId);
                 if (cancelled) return;
                 setMeta(res.pitch);
-                setBlocks(res.blocks);
+                setDefaultBlocks(res.defaultBlocks);
+                setDays(res.days);
             } catch (err) {
                 if (!cancelled) setError(err?.message ?? "Failed to load blocks.");
             } finally {
@@ -66,48 +91,111 @@ export default function SlotEditor({ pitchId, onClose }) {
         };
     }, [pitchId]);
 
+    const isDefaultTab = activeTab === "default";
+    const activeDay = isDefaultTab ? null : days.find((d) => d.date === activeTab);
+    const currentBlocks = isDefaultTab ? defaultBlocks : activeDay?.blocks ?? [];
+
+    function setCurrentBlocks(updater) {
+        if (isDefaultTab) {
+            setDefaultBlocks((prev) =>
+                typeof updater === "function" ? updater(prev) : updater
+            );
+        } else {
+            setDays((prev) =>
+                prev.map((d) =>
+                    d.date === activeTab
+                        ? {
+                            ...d,
+                            blocks:
+                                typeof updater === "function"
+                                    ? updater(d.blocks)
+                                    : updater,
+                        }
+                        : d
+                )
+            );
+        }
+    }
+
     function resize(index, delta) {
         setError("");
         setNote("");
-        const res = applyResize(blocks, index, delta);
-        setBlocks(res.blocks);
+        const res = applyResize(currentBlocks, index, delta);
+        setCurrentBlocks(res.blocks);
         if (res.note) setNote(res.note);
-    }
-
-    function toggleGap(index) {
-        setError("");
-        setNote("");
-        setBlocks((prev) =>
-            prev[index].isGap ? convertToBookable(prev, index) : convertToGap(prev, index)
-        );
     }
 
     function remove(index) {
         setError("");
         setNote("");
-        setBlocks((prev) => deleteBlock(prev, index));
+        setCurrentBlocks((prev) => deleteBlock(prev, index));
     }
 
     function updatePrice(index, value) {
-        setBlocks((prev) =>
+        setCurrentBlocks((prev) =>
             prev.map((b, i) => (i === index ? { ...b, price: value } : b))
         );
     }
 
-    function handleRegenerate() {
-        if (!confirm("Regenerate all blocks from the pitch's defaults? Manual edits will be lost.")) {
+    function handleRegenerateDefault() {
+        if (!confirm("Regenerate the DEFAULT schedule from the pitch's hours? Manual edits will be lost.")) {
             return;
         }
         setError("");
         setNote("");
         startTransition(async () => {
             try {
-                await regeneratePitchBlocks(pitchId);
-                const res = await getPitchBlocks(pitchId);
+                await regenerateDefaultBlocks(pitchId);
+                const res = await getPitchBlocksEditorData(pitchId);
                 setMeta(res.pitch);
-                setBlocks(res.blocks);
+                setDefaultBlocks(res.defaultBlocks);
+                setDays(res.days);
             } catch (err) {
                 setError(err?.message ?? "Regeneration failed.");
+            }
+        });
+    }
+
+    function handleSeedDateFromDefault() {
+        if (!activeDay) return;
+        if (
+            !confirm(
+                `Copy the default schedule into ${activeDay.date}? This will overwrite the current blocks for that date.`
+            )
+        ) {
+            return;
+        }
+        setError("");
+        setNote("");
+        startTransition(async () => {
+            try {
+                await seedDateFromDefault(pitchId, activeDay.date);
+                const res = await getPitchBlocksEditorData(pitchId);
+                setMeta(res.pitch);
+                setDefaultBlocks(res.defaultBlocks);
+                setDays(res.days);
+            } catch (err) {
+                setError(err?.message ?? "Failed to copy default.");
+            }
+        });
+    }
+
+    function handleResetDate() {
+        if (!activeDay) return;
+        if (!confirm(`Remove the override for ${activeDay.date} and use the default?`)) {
+            return;
+        }
+        setError("");
+        setNote("");
+        startTransition(async () => {
+            try {
+                await resetDateToDefault(pitchId, activeDay.date);
+                const res = await getPitchBlocksEditorData(pitchId);
+                setMeta(res.pitch);
+                setDefaultBlocks(res.defaultBlocks);
+                setDays(res.days);
+            } catch (err) {
+                setError(err?.message ?? "Reset failed.");
             }
         });
     }
@@ -117,7 +205,11 @@ export default function SlotEditor({ pitchId, onClose }) {
         setNote("");
         startTransition(async () => {
             try {
-                await replacePitchBlocks(pitchId, blocks);
+                if (isDefaultTab) {
+                    await replaceDefaultBlocks(pitchId, defaultBlocks);
+                } else if (activeDay) {
+                    await replaceDateBlocks(pitchId, activeDay.date, activeDay.blocks);
+                }
                 onClose?.();
             } catch (err) {
                 setError(err?.message ?? "Save failed.");
@@ -125,7 +217,7 @@ export default function SlotEditor({ pitchId, onClose }) {
         });
     }
 
-    const derived = blocks.length ? deriveHours(blocks) : null;
+    const derived = currentBlocks.length ? deriveHours(currentBlocks) : null;
 
     return (
         <motion.div
@@ -148,8 +240,8 @@ export default function SlotEditor({ pitchId, onClose }) {
                         <h2 className="text-lg font-extrabold text-ink-900">Slot editor</h2>
                         {meta && (
                             <p className="mt-0.5 text-sm text-ink-500">
-                                {meta.name} · {blocks.length} block
-                                {blocks.length === 1 ? "" : "s"}
+                                {meta.name} · {currentBlocks.length} block
+                                {currentBlocks.length === 1 ? "" : "s"}
                                 {derived && (
                                     <>
                                         {" · "}
@@ -168,6 +260,52 @@ export default function SlotEditor({ pitchId, onClose }) {
                     >
                         <X className="h-5 w-5" />
                     </button>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 border-b border-ink-100 bg-ink-50/60 px-5 py-3">
+                    <button
+                        onClick={() => {
+                            setActiveTab("default");
+                            setNote("");
+                            setError("");
+                        }}
+                        className={`rounded-full px-3.5 py-1.5 text-xs font-bold uppercase tracking-wider transition-colors ${isDefaultTab
+                                ? "bg-turf-500 text-white shadow-glow"
+                                : "bg-white text-ink-600 ring-1 ring-ink-200 hover:bg-turf-50 hover:text-turf-700"
+                            }`}
+                    >
+                        Default schedule
+                    </button>
+                    <span className="text-ink-300">|</span>
+                    {days.map((d) => {
+                        const active = !isDefaultTab && d.date === activeTab;
+                        return (
+                            <button
+                                key={d.date}
+                                onClick={() => {
+                                    setActiveTab(d.date);
+                                    setNote("");
+                                    setError("");
+                                }}
+                                className={`flex items-center gap-2 rounded-full px-3.5 py-1.5 text-xs font-bold transition-colors ${active
+                                        ? "bg-turf-500 text-white shadow-glow"
+                                        : "bg-white text-ink-600 ring-1 ring-ink-200 hover:bg-turf-50 hover:text-turf-700"
+                                    }`}
+                            >
+                                <span>{formatDayLabel(d.date)}</span>
+                                {d.isOverride && (
+                                    <span
+                                        className={`rounded-full px-1.5 py-0.5 text-[9px] uppercase tracking-wider ${active
+                                                ? "bg-white/25 text-white"
+                                                : "bg-amber-100 text-amber-700"
+                                            }`}
+                                    >
+                                        Custom
+                                    </span>
+                                )}
+                            </button>
+                        );
+                    })}
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-5">
@@ -190,30 +328,34 @@ export default function SlotEditor({ pitchId, onClose }) {
                         </div>
                     )}
 
-                    {!loading && blocks.length === 0 && (
+                    {!loading && currentBlocks.length === 0 && (
                         <div className="rounded-2xl border border-dashed border-ink-300 bg-ink-50 p-10 text-center text-sm text-ink-500">
-                            No blocks yet. Click &ldquo;Regenerate&rdquo; to build the default grid.
+                            {isDefaultTab ? (
+                                <>
+                                    No default blocks yet. Click &ldquo;Regenerate&rdquo; to
+                                    build the template.
+                                </>
+                            ) : (
+                                <>
+                                    This day has no blocks. Click &ldquo;Copy default&rdquo;
+                                    to start from the template, or add blocks from the
+                                    Default tab.
+                                </>
+                            )}
                         </div>
                     )}
 
-                    {!loading && blocks.length > 0 && (
+                    {!loading && currentBlocks.length > 0 && (
                         <div className="space-y-2">
-                            {blocks.map((b, i) => {
+                            {currentBlocks.map((b, i) => {
                                 const dur = minutesBetween(b.startTime, b.endTime);
                                 return (
                                     <div
                                         key={b.id ?? `blk-${i}`}
-                                        className={`flex flex-wrap items-center gap-3 rounded-2xl border p-3 ${b.isGap
-                                                ? "border-dashed border-ink-300 bg-ink-50"
-                                                : "border-ink-200 bg-white"
-                                            }`}
+                                        className="flex flex-wrap items-center gap-3 rounded-2xl border border-ink-200 bg-white p-3"
                                     >
                                         <div className="flex min-w-[180px] items-center gap-2">
-                                            {b.isGap ? (
-                                                <Coffee className="h-4 w-4 text-ink-400" />
-                                            ) : (
-                                                <Clock className="h-4 w-4 text-turf-500" />
-                                            )}
+                                            <Clock className="h-4 w-4 text-turf-500" />
                                             <span className="text-sm font-bold text-ink-900">
                                                 {format12h(b.startTime)} – {format12h(b.endTime)}
                                             </span>
@@ -222,23 +364,21 @@ export default function SlotEditor({ pitchId, onClose }) {
                                             </span>
                                         </div>
 
-                                        {!b.isGap && (
-                                            <div className="flex items-center gap-1.5">
-                                                <span className="text-xs text-ink-500">৳</span>
-                                                <input
-                                                    type="number"
-                                                    value={b.price}
-                                                    onChange={(e) => updatePrice(i, e.target.value)}
-                                                    className="w-24 rounded-lg border border-ink-200 bg-white px-2 py-1.5 text-sm font-semibold text-ink-900 focus:border-turf-400 focus:outline-none focus:ring-2 focus:ring-turf-100"
-                                                />
-                                            </div>
-                                        )}
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="text-xs text-ink-500">৳</span>
+                                            <input
+                                                type="number"
+                                                value={b.price}
+                                                onChange={(e) => updatePrice(i, e.target.value)}
+                                                className="w-24 rounded-lg border border-ink-200 bg-white px-2 py-1.5 text-sm font-semibold text-ink-900 focus:border-turf-400 focus:outline-none focus:ring-2 focus:ring-turf-100"
+                                            />
+                                        </div>
 
                                         <div className="ml-auto flex flex-wrap items-center gap-1.5">
                                             <button
                                                 onClick={() => resize(i, -15)}
                                                 disabled={dur <= 15}
-                                                title="Shrink 15 min → creates a buffer"
+                                                title="Shrink 15 min"
                                                 className="rounded-lg border border-ink-200 bg-white p-1.5 text-ink-600 transition-colors hover:bg-ink-50 disabled:opacity-40"
                                             >
                                                 <Minus className="h-3.5 w-3.5" />
@@ -260,25 +400,14 @@ export default function SlotEditor({ pitchId, onClose }) {
                                             <button
                                                 onClick={() => resize(i, -30)}
                                                 disabled={dur <= 30}
-                                                title="Shrink 30 min → creates a buffer"
+                                                title="Shrink 30 min"
                                                 className="rounded-lg border border-ink-200 bg-white px-2 py-1.5 text-[10px] font-bold text-ink-600 transition-colors hover:bg-ink-50 disabled:opacity-40"
                                             >
                                                 −30m
                                             </button>
                                             <button
-                                                onClick={() => toggleGap(i)}
-                                                title={b.isGap ? "Make bookable" : "Make buffer"}
-                                                className="rounded-lg border border-ink-200 bg-white p-1.5 text-ink-600 transition-colors hover:bg-ink-50"
-                                            >
-                                                {b.isGap ? (
-                                                    <Unlock className="h-3.5 w-3.5" />
-                                                ) : (
-                                                    <Lock className="h-3.5 w-3.5" />
-                                                )}
-                                            </button>
-                                            <button
                                                 onClick={() => remove(i)}
-                                                title="Delete block (merges into previous)"
+                                                title="Delete block"
                                                 className="rounded-lg border border-red-200 bg-white p-1.5 text-red-600 transition-colors hover:bg-red-50"
                                             >
                                                 <Trash2 className="h-3.5 w-3.5" />
@@ -291,15 +420,36 @@ export default function SlotEditor({ pitchId, onClose }) {
                     )}
                 </div>
 
-                <div className="flex items-center gap-3 border-t border-ink-100 p-5">
-                    <button
-                        onClick={handleRegenerate}
-                        disabled={isPending}
-                        className="inline-flex items-center gap-2 rounded-2xl border border-ink-200 bg-white px-4 py-3 text-sm font-bold text-ink-700 transition-colors hover:bg-ink-50 disabled:opacity-60"
-                    >
-                        <RefreshCw className="h-4 w-4" />
-                        Regenerate
-                    </button>
+                <div className="flex flex-wrap items-center gap-3 border-t border-ink-100 p-5">
+                    {isDefaultTab ? (
+                        <button
+                            onClick={handleRegenerateDefault}
+                            disabled={isPending}
+                            className="inline-flex items-center gap-2 rounded-2xl border border-ink-200 bg-white px-4 py-3 text-sm font-bold text-ink-700 transition-colors hover:bg-ink-50 disabled:opacity-60"
+                        >
+                            <RefreshCw className="h-4 w-4" />
+                            Regenerate
+                        </button>
+                    ) : (
+                        <>
+                            <button
+                                onClick={handleSeedDateFromDefault}
+                                disabled={isPending}
+                                className="inline-flex items-center gap-2 rounded-2xl border border-ink-200 bg-white px-4 py-3 text-sm font-bold text-ink-700 transition-colors hover:bg-ink-50 disabled:opacity-60"
+                            >
+                                <Copy className="h-4 w-4" />
+                                Copy default
+                            </button>
+                            <button
+                                onClick={handleResetDate}
+                                disabled={isPending || !activeDay?.isOverride}
+                                className="inline-flex items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-700 transition-colors hover:bg-amber-100 disabled:opacity-40"
+                            >
+                                <RotateCcw className="h-4 w-4" />
+                                Reset to default
+                            </button>
+                        </>
+                    )}
                     <div className="flex-1" />
                     <button
                         onClick={onClose}
@@ -321,7 +471,7 @@ export default function SlotEditor({ pitchId, onClose }) {
                         ) : (
                             <>
                                 <Save className="h-4 w-4" />
-                                Save blocks
+                                {isDefaultTab ? "Save default" : "Save day"}
                             </>
                         )}
                     </button>

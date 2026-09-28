@@ -9,30 +9,57 @@ import { headers } from "next/headers";
 import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { createBkashPayment, executeBkashPayment } from "@/lib/bkash";
-import { minutesBetween } from "@/lib/slots";
+
+/* -------------------------------------------------------------- */
+/* Helpers                                                         */
+/* -------------------------------------------------------------- */
+
+/** UUID v4-ish check. Any real Postgres uuid will match. */
+const UUID_RE =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isUuid(v) {
+    return typeof v === "string" && UUID_RE.test(v);
+}
 
 /**
- * Create a pending booking and start a bKash payment session.
- * Price is authoritative server-side — read from the time block.
+ * Resolve the block a user is trying to book.
+ *
+ * Two shapes of `timeBlockId` are possible:
+ *   1. Real uuid → row in time_blocks (a per-date override).
+ *   2. "default-<pitchId>-<index>" → entry in pitches.defaultBlocks.
+ *
+ * Returns { startTime, endTime, price, dbId } where dbId is the
+ * time_blocks.id (or null when the block came from the default template).
  */
-export async function startBkashBooking({ pitchId, timeBlockId, bookingDate }) {
-    const session = await auth.api.getSession({ headers: await headers() });
-    if (!session?.user) throw new Error("Unauthorized");
+async function resolveBookingBlock({ pitch, pitchId, timeBlockId }) {
+    // Case 2: default template
+    if (typeof timeBlockId === "string" && timeBlockId.startsWith("default-")) {
+        const parts = timeBlockId.split("-");
+        const index = Number(parts[parts.length - 1]);
+        const list = Array.isArray(pitch.defaultBlocks) ? pitch.defaultBlocks : [];
 
-    if (!pitchId || !timeBlockId || !bookingDate) {
-        throw new Error("Missing booking details.");
+        if (!Number.isInteger(index) || index < 0 || index >= list.length) {
+            throw new Error("Time block not found.");
+        }
+
+        const b = list[index];
+        if (!b) throw new Error("Time block not found.");
+        if (Number(b.price) <= 0) throw new Error("Invalid block price.");
+
+        return {
+            startTime: String(b.startTime),
+            endTime: String(b.endTime),
+            price: Number(b.price),
+            dbId: null,
+        };
     }
 
-    // Validate pitch
-    const [pitch] = await db
-        .select()
-        .from(pitches)
-        .where(and(eq(pitches.id, pitchId), eq(pitches.isActive, true)))
-        .limit(1);
+    // Case 1: per-date override (real uuid)
+    if (!isUuid(timeBlockId)) {
+        throw new Error("Invalid time block reference.");
+    }
 
-    if (!pitch) throw new Error("Ground not found or inactive.");
-
-    // Load and validate block
     const [block] = await db
         .select()
         .from(timeBlocks)
@@ -46,31 +73,58 @@ export async function startBkashBooking({ pitchId, timeBlockId, bookingDate }) {
         .limit(1);
 
     if (!block) throw new Error("Time block not found.");
-    if (block.isGap) throw new Error("This time is not bookable.");
     if (Number(block.price) <= 0) throw new Error("Invalid block price.");
 
-    const { startTime, endTime } = block;
-    const price = Number(block.price);
+    return {
+        startTime: block.startTime,
+        endTime: block.endTime,
+        price: Number(block.price),
+        dbId: block.id,
+    };
+}
 
-    // Reject past slots (respects midnight-crossing convention)
+/* -------------------------------------------------------------- */
+/* Start payment                                                   */
+/* -------------------------------------------------------------- */
+
+export async function startBkashBooking({ pitchId, timeBlockId, bookingDate }) {
+    const session = await auth.api.getSession({ headers: await headers() });
+    if (!session?.user) throw new Error("Unauthorized");
+
+    if (!pitchId || !timeBlockId || !bookingDate) {
+        throw new Error("Missing booking details.");
+    }
+
+    const [pitch] = await db
+        .select()
+        .from(pitches)
+        .where(and(eq(pitches.id, pitchId), eq(pitches.isActive, true)))
+        .limit(1);
+
+    if (!pitch) throw new Error("Ground not found or inactive.");
+
+    const { startTime, endTime, price, dbId } = await resolveBookingBlock({
+        pitch,
+        pitchId,
+        timeBlockId,
+    });
+
+    // Past-slot check
     const now = new Date();
     const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
     if (bookingDate < todayKey) throw new Error("Cannot book a slot in the past.");
 
     if (bookingDate === todayKey) {
         const nowMins = now.getHours() * 60 + now.getMinutes();
-        const startMins = Number(startTime.slice(0, 2)) * 60 + Number(startTime.slice(3, 5));
-        // startMins < openHour*60 means it's a post-midnight slot belonging to
-        // today's business day — always in the future relative to "now" during
-        // the same business day. Only reject if startMins <= nowMins AND the
-        // slot is in the morning block (>= open hour).
+        const startMins =
+            Number(startTime.slice(0, 2)) * 60 + Number(startTime.slice(3, 5));
         const isPostMidnight = startMins < 6 * 60;
         if (!isPostMidnight && startMins <= nowMins) {
             throw new Error("This slot has already passed.");
         }
     }
 
-    // Conflict check (application level — the partial unique index is the last line)
+    // Conflict check
     const existing = await db
         .select()
         .from(bookings)
@@ -96,7 +150,7 @@ export async function startBkashBooking({ pitchId, timeBlockId, bookingDate }) {
             .values({
                 userId: session.user.id,
                 pitchId,
-                timeBlockId: block.id,
+                timeBlockId: dbId, // null when booking from default template
                 bookingDate,
                 startTime,
                 endTime,
@@ -148,9 +202,10 @@ export async function startBkashBooking({ pitchId, timeBlockId, bookingDate }) {
     };
 }
 
-/**
- * Execute the payment and confirm the booking if successful.
- */
+/* -------------------------------------------------------------- */
+/* Finalize payment                                                */
+/* -------------------------------------------------------------- */
+
 export async function finalizeBkashPayment({ bookingId, paymentID }) {
     const [booking] = await db
         .select()

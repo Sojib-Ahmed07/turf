@@ -39,28 +39,57 @@ export async function getPitches() {
 }
 
 /* -------------------------------------------------------------- */
-/* Time blocks (for booking grid)                                  */
+/* Time blocks for a specific date (override or default)           */
 /* -------------------------------------------------------------- */
 
-export async function getTimeBlocksForPitch(pitchId) {
-    if (!pitchId) return [];
+/**
+ * Returns the block list for a pitch on a specific date.
+ * If a per-date override exists in time_blocks, it wins.
+ * Otherwise the pitch's defaultBlocks template is returned.
+ */
+export async function getTimeBlocksForPitch(pitchId, date) {
+    if (!pitchId || !date) return [];
 
-    const rows = await db
+    const overrides = await db
         .select()
         .from(timeBlocks)
         .where(
-            and(eq(timeBlocks.pitchId, pitchId), eq(timeBlocks.isActive, true))
+            and(
+                eq(timeBlocks.pitchId, pitchId),
+                eq(timeBlocks.date, date),
+                eq(timeBlocks.isActive, true)
+            )
         )
         .orderBy(asc(timeBlocks.sortOrder));
 
-    return rows.map((b) => ({
-        id: b.id,
-        startTime: b.startTime,
-        endTime: b.endTime,
-        price: String(b.price),
-        isGap: b.isGap,
-        sortOrder: b.sortOrder,
-    }));
+    if (overrides.length > 0) {
+        return overrides.map((b) => ({
+            id: b.id,
+            startTime: b.startTime,
+            endTime: b.endTime,
+            price: String(b.price),
+            sortOrder: b.sortOrder,
+        }));
+    }
+
+    const [pitch] = await db
+        .select({ defaultBlocks: pitches.defaultBlocks })
+        .from(pitches)
+        .where(eq(pitches.id, pitchId))
+        .limit(1);
+
+    if (!pitch || !Array.isArray(pitch.defaultBlocks)) return [];
+
+    return pitch.defaultBlocks
+        .slice()
+        .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+        .map((b, i) => ({
+            id: `default-${pitchId}-${i}`,
+            startTime: b.startTime,
+            endTime: b.endTime,
+            price: String(b.price),
+            sortOrder: i,
+        }));
 }
 
 /* -------------------------------------------------------------- */

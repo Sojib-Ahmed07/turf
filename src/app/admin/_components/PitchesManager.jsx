@@ -14,6 +14,7 @@ import {
     SlidersHorizontal,
 } from "lucide-react";
 import { togglePitchActive, upsertPitch } from "@/app/actions/admin";
+import { hourOptions, formatHour12 } from "@/lib/slots";
 import SlotEditor from "./SlotEditor";
 
 const SPORTS = [
@@ -28,6 +29,8 @@ function formatBDT(v) {
     if (!n) return "৳0";
     return `৳${n.toFixed(0)}`;
 }
+
+const HOURS = hourOptions();
 
 const EMPTY_FORM = {
     id: null,
@@ -95,7 +98,7 @@ export default function PitchesManager({ initialPitches }) {
 
         startTransition(async () => {
             try {
-                const res = await upsertPitch({
+                await upsertPitch({
                     id: editing.id,
                     name: editing.name.trim(),
                     description: editing.description.trim() || null,
@@ -195,13 +198,18 @@ export default function PitchesManager({ initialPitches }) {
                                 {p.description || "No description"}
                             </p>
 
+                            <p className="mt-3 text-[11px] font-semibold text-ink-500">
+                                {formatHour12(p.openHour)} → {formatHour12(p.closeHour)} ·{" "}
+                                {p.defaultSlotMinutes}m slots
+                            </p>
+
                             <div className="mt-4 flex items-center justify-between border-t border-ink-100 pt-4">
                                 <div>
                                     <p className="text-lg font-extrabold text-turf-700">
                                         {formatBDT(p.hourlyRate)}
                                     </p>
                                     <p className="text-[10px] uppercase tracking-wider text-ink-400">
-                                        base / hour · {p.defaultSlotMinutes}m slots
+                                        base / hour
                                     </p>
                                 </div>
 
@@ -327,22 +335,48 @@ export default function PitchesManager({ initialPitches }) {
                                     </div>
 
                                     <div className="grid grid-cols-3 gap-4">
-                                        <Field
-                                            label="Open hour (0-23)"
-                                            type="number"
-                                            value={editing.openHour}
-                                            onChange={(v) => setEditing({ ...editing, openHour: v })}
-                                            required
-                                            placeholder="6"
-                                        />
-                                        <Field
-                                            label="Close hour (0-23)"
-                                            type="number"
-                                            value={editing.closeHour}
-                                            onChange={(v) => setEditing({ ...editing, closeHour: v })}
-                                            required
-                                            placeholder="3"
-                                        />
+                                        <div>
+                                            <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ink-500">
+                                                Opens at
+                                            </label>
+                                            <select
+                                                value={editing.openHour}
+                                                onChange={(e) =>
+                                                    setEditing({
+                                                        ...editing,
+                                                        openHour: Number(e.target.value),
+                                                    })
+                                                }
+                                                className="w-full rounded-xl border border-ink-200 bg-white px-4 py-3 text-sm text-ink-900 focus:border-turf-400 focus:outline-none focus:ring-2 focus:ring-turf-100"
+                                            >
+                                                {HOURS.map((h) => (
+                                                    <option key={h.value} value={h.value}>
+                                                        {h.label}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ink-500">
+                                                Closes at
+                                            </label>
+                                            <select
+                                                value={editing.closeHour}
+                                                onChange={(e) =>
+                                                    setEditing({
+                                                        ...editing,
+                                                        closeHour: Number(e.target.value),
+                                                    })
+                                                }
+                                                className="w-full rounded-xl border border-ink-200 bg-white px-4 py-3 text-sm text-ink-900 focus:border-turf-400 focus:outline-none focus:ring-2 focus:ring-turf-100"
+                                            >
+                                                {HOURS.map((h) => (
+                                                    <option key={h.value} value={h.value}>
+                                                        {h.label}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </div>
                                         <Field
                                             label="Default slot (min)"
                                             type="number"
@@ -354,6 +388,16 @@ export default function PitchesManager({ initialPitches }) {
                                             placeholder="90"
                                         />
                                     </div>
+
+                                    <p className="-mt-2 text-[11px] text-ink-500">
+                                        Business day runs from{" "}
+                                        <span className="font-semibold text-turf-700">
+                                            {formatHour12(editing.openHour)} →{" "}
+                                            {formatHour12(editing.closeHour)}
+                                        </span>
+                                        . If the close hour is earlier than the open hour, the day
+                                        crosses midnight (e.g. 6 AM → 3 AM).
+                                    </p>
 
                                     <div>
                                         <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ink-500">
@@ -383,8 +427,9 @@ export default function PitchesManager({ initialPitches }) {
 
                                     {!editing.id && (
                                         <p className="rounded-xl border border-turf-100 bg-turf-50 px-3 py-2 text-[11px] text-turf-700">
-                                            Saving will auto-generate a slot grid using the default
-                                            duration. You can fine-tune it from &ldquo;Manage slots&rdquo;.
+                                            Saving will auto-generate a default slot grid using the
+                                            default duration. You can fine-tune it from
+                                            &ldquo;Manage slots&rdquo;.
                                         </p>
                                     )}
                                 </div>

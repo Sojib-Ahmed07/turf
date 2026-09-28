@@ -13,6 +13,7 @@ import {
     generateDefaultBlocks,
     validateBlocks,
     deriveHours,
+    cloneAsTemplate,
 } from "@/lib/slots";
 import { SPORTS } from "@/db/pitch-schema";
 
@@ -48,11 +49,28 @@ function dateKeyPlus(days) {
     return `${y}-${m}-${day}`;
 }
 
+/** Returns ["YYYY-MM-DD", ...] for today + next (n-1) days. */
+function nextDateKeys(n) {
+    const out = [];
+    for (let i = 0; i < n; i++) out.push(dateKeyPlus(i));
+    return out;
+}
+
 function revalidateAdminAll() {
     revalidatePath("/admin");
     revalidatePath("/admin/bookings");
     revalidatePath("/admin/pitches");
     revalidatePath("/book");
+}
+
+/** Normalize an incoming block array from the client. */
+function normalizeBlocks(blocks) {
+    return (blocks || []).map((b, i) => ({
+        startTime: String(b.startTime),
+        endTime: String(b.endTime),
+        price: String(b.price ?? "0"),
+        sortOrder: i,
+    }));
 }
 
 /* -------------------------------------------------------------- */
@@ -117,20 +135,15 @@ export async function getDashboardStats() {
     const monthRevenue = Number(monthRows[0]?.revenue ?? 0);
     const pitchCount = Number(activePitches[0]?.count ?? 0);
 
-    // Occupancy = today's bookings ÷ (bookable blocks on active pitches).
-    // Only count blocks belonging to active pitches.
-    const bookableBlocksPerPitch = await db
-        .select({
-            pitchId: timeBlocks.pitchId,
-            count: sql`count(*)`.as("count"),
-        })
-        .from(timeBlocks)
-        .innerJoin(pitches, eq(timeBlocks.pitchId, pitches.id))
-        .where(and(eq(timeBlocks.isGap, false), eq(pitches.isActive, true)))
-        .groupBy(timeBlocks.pitchId);
+    // Occupancy: use the DEFAULT template block count per active pitch as
+    // the "total slots per day" baseline (overrides are rare edge cases).
+    const pitchRows = await db
+        .select({ defaultBlocks: pitches.defaultBlocks })
+        .from(pitches)
+        .where(eq(pitches.isActive, true));
 
-    const totalSlotsToday = bookableBlocksPerPitch.reduce(
-        (acc, r) => acc + Number(r.count ?? 0),
+    const totalSlotsToday = pitchRows.reduce(
+        (acc, r) => acc + (Array.isArray(r.defaultBlocks) ? r.defaultBlocks.length : 0),
         0
     );
     const occupancy =
@@ -233,6 +246,7 @@ export async function getAllPitchesAdmin() {
         openHour: p.openHour,
         closeHour: p.closeHour,
         defaultSlotMinutes: p.defaultSlotMinutes,
+        defaultBlocks: Array.isArray(p.defaultBlocks) ? p.defaultBlocks : [],
         imageUrl: p.imageUrl ?? null,
         isActive: p.isActive,
         createdAt: p.createdAt?.toISOString?.() ?? null,
@@ -282,15 +296,12 @@ export async function upsertPitch({
 
     const oh = Number(openHour);
     const ch = Number(closeHour);
-    // Accept 0–23 for both. 0 is a valid hour (midnight).
     if (!Number.isInteger(oh) || oh < 0 || oh > 23) {
         throw new Error("Invalid opening hour.");
     }
     if (!Number.isInteger(ch) || ch < 0 || ch > 23) {
         throw new Error("Invalid closing hour.");
     }
-    // openHour === closeHour is only valid if the pitch runs a full 24h,
-    // which isn't supported here. Reject to avoid an empty grid.
     if (oh === ch) {
         throw new Error("Opening and closing hour cannot be the same.");
     }
@@ -317,27 +328,25 @@ export async function upsertPitch({
     if (id) {
         await db.update(pitches).set(values).where(eq(pitches.id, id));
     } else {
-        const [row] = await db.insert(pitches).values(values).returning();
-        pitchId = row.id;
-
-        // Auto-generate the default block sequence for the new pitch.
+        // Generate default template on creation
         const generated = generateDefaultBlocks({
             openHour: oh,
             closeHour: ch,
             defaultSlotMinutes: dsm,
             hourlyRate,
         });
-        await db.insert(timeBlocks).values(
-            generated.map((b) => ({
-                pitchId,
-                startTime: b.startTime,
-                endTime: b.endTime,
-                price: b.price,
-                isGap: b.isGap,
-                sortOrder: b.sortOrder,
-                isActive: true,
-            }))
-        );
+        const template = generated.map((b, i) => ({
+            startTime: b.startTime,
+            endTime: b.endTime,
+            price: String(b.price),
+            sortOrder: i,
+        }));
+
+        const [row] = await db
+            .insert(pitches)
+            .values({ ...values, defaultBlocks: template })
+            .returning();
+        pitchId = row.id;
     }
 
     revalidateAdminAll();
@@ -345,10 +354,16 @@ export async function upsertPitch({
 }
 
 /* -------------------------------------------------------------- */
-/* Time blocks (per pitch)                                         */
+/* Block editor — data loading                                     */
 /* -------------------------------------------------------------- */
 
-export async function getPitchBlocks(pitchId) {
+/**
+ * Load block editor data for a pitch:
+ *   - the pitch's DEFAULT template
+ *   - three days: today, +1, +2 with their current (override or default) blocks
+ *   - which of those dates currently has an override
+ */
+export async function getPitchBlocksEditorData(pitchId) {
     await requireAdmin();
 
     const [pitch] = await db
@@ -358,11 +373,48 @@ export async function getPitchBlocks(pitchId) {
         .limit(1);
     if (!pitch) throw new Error("Pitch not found");
 
-    const rows = await db
+    const dates = nextDateKeys(3);
+
+    const overrideRows = await db
         .select()
         .from(timeBlocks)
-        .where(eq(timeBlocks.pitchId, pitchId))
-        .orderBy(asc(timeBlocks.sortOrder));
+        .where(
+            and(
+                eq(timeBlocks.pitchId, pitchId),
+                sql`${timeBlocks.date} in (${sql.join(dates.map((d) => sql`${d}`), sql`, `)})`
+            )
+        )
+        .orderBy(asc(timeBlocks.date), asc(timeBlocks.sortOrder));
+
+    const byDate = new Map();
+    for (const r of overrideRows) {
+        if (!byDate.has(r.date)) byDate.set(r.date, []);
+        byDate.get(r.date).push({
+            id: r.id,
+            startTime: r.startTime,
+            endTime: r.endTime,
+            price: String(r.price),
+            sortOrder: r.sortOrder,
+        });
+    }
+
+    const defaultTemplate = Array.isArray(pitch.defaultBlocks)
+        ? pitch.defaultBlocks.map((b, i) => ({
+            startTime: b.startTime,
+            endTime: b.endTime,
+            price: String(b.price),
+            sortOrder: i,
+        }))
+        : [];
+
+    const days = dates.map((date) => {
+        const override = byDate.get(date) || null;
+        return {
+            date,
+            isOverride: override !== null,
+            blocks: override ?? defaultTemplate,
+        };
+    });
 
     return {
         pitch: {
@@ -374,23 +426,110 @@ export async function getPitchBlocks(pitchId) {
             defaultSlotMinutes: pitch.defaultSlotMinutes,
             hourlyRate: String(pitch.hourlyRate),
         },
-        blocks: rows.map((b) => ({
-            id: b.id,
-            startTime: b.startTime,
-            endTime: b.endTime,
-            price: String(b.price),
-            isGap: b.isGap,
-            sortOrder: b.sortOrder,
-            isActive: b.isActive,
-        })),
+        defaultBlocks: defaultTemplate,
+        days,
     };
 }
 
+/* -------------------------------------------------------------- */
+/* Block editor — mutations                                        */
+/* -------------------------------------------------------------- */
+
 /**
- * Regenerate the default block sequence for a pitch, wiping existing blocks.
- * Also re-derives openHour / closeHour from the pitch's current fields.
+ * Replace the pitch's DEFAULT template.
  */
-export async function regeneratePitchBlocks(pitchId) {
+export async function replaceDefaultBlocks(pitchId, blocks) {
+    await requireAdmin();
+
+    const [pitch] = await db
+        .select()
+        .from(pitches)
+        .where(eq(pitches.id, pitchId))
+        .limit(1);
+    if (!pitch) throw new Error("Pitch not found");
+
+    const normalized = normalizeBlocks(blocks);
+    const check = validateBlocks(normalized);
+    if (!check.ok) throw new Error(check.error);
+
+    const { openHour, closeHour } = deriveHours(normalized);
+
+    await db
+        .update(pitches)
+        .set({
+            defaultBlocks: normalized.map((b) => ({
+                startTime: b.startTime,
+                endTime: b.endTime,
+                price: b.price,
+                sortOrder: b.sortOrder,
+            })),
+            openHour,
+            closeHour,
+        })
+        .where(eq(pitches.id, pitchId));
+
+    revalidateAdminAll();
+    return { ok: true };
+}
+
+/**
+ * Replace the block OVERRIDE for a specific date.
+ */
+export async function replaceDateBlocks(pitchId, date, blocks) {
+    await requireAdmin();
+
+    const [pitch] = await db
+        .select()
+        .from(pitches)
+        .where(eq(pitches.id, pitchId))
+        .limit(1);
+    if (!pitch) throw new Error("Pitch not found");
+
+    const normalized = normalizeBlocks(blocks);
+    const check = validateBlocks(normalized);
+    if (!check.ok) throw new Error(check.error);
+
+    await db
+        .delete(timeBlocks)
+        .where(and(eq(timeBlocks.pitchId, pitchId), eq(timeBlocks.date, date)));
+
+    if (normalized.length > 0) {
+        await db.insert(timeBlocks).values(
+            normalized.map((b) => ({
+                pitchId,
+                date,
+                startTime: b.startTime,
+                endTime: b.endTime,
+                price: b.price,
+                sortOrder: b.sortOrder,
+                isActive: true,
+            }))
+        );
+    }
+
+    revalidateAdminAll();
+    return { ok: true };
+}
+
+/**
+ * Remove the OVERRIDE for a date — the pitch's default template kicks in.
+ */
+export async function resetDateToDefault(pitchId, date) {
+    await requireAdmin();
+
+    await db
+        .delete(timeBlocks)
+        .where(and(eq(timeBlocks.pitchId, pitchId), eq(timeBlocks.date, date)));
+
+    revalidateAdminAll();
+    return { ok: true };
+}
+
+/**
+ * Seed the pitch's default template from a fresh grid using the pitch's
+ * openHour / closeHour / defaultSlotMinutes / hourlyRate.
+ */
+export async function regenerateDefaultBlocks(pitchId) {
     await requireAdmin();
 
     const [pitch] = await db
@@ -407,35 +546,27 @@ export async function regeneratePitchBlocks(pitchId) {
         hourlyRate: Number(pitch.hourlyRate),
     });
 
-    await db.delete(timeBlocks).where(eq(timeBlocks.pitchId, pitchId));
-    await db.insert(timeBlocks).values(
-        generated.map((b) => ({
-            pitchId,
-            startTime: b.startTime,
-            endTime: b.endTime,
-            price: b.price,
-            isGap: b.isGap,
-            sortOrder: b.sortOrder,
-            isActive: true,
-        }))
-    );
+    const template = generated.map((b, i) => ({
+        startTime: b.startTime,
+        endTime: b.endTime,
+        price: String(b.price),
+        sortOrder: i,
+    }));
+
+    await db
+        .update(pitches)
+        .set({ defaultBlocks: template })
+        .where(eq(pitches.id, pitchId));
 
     revalidateAdminAll();
     return { ok: true };
 }
 
 /**
- * Replace the entire block sequence for a pitch in one shot.
- * The admin editor works on a draft array and saves the whole thing.
- *
- * After saving, the pitch's openHour / closeHour are re-derived from the
- * new sequence — so extending the last block auto-moves the closing time
- * (e.g. 03:00 → 03:30).
- *
- * @param {string} pitchId
- * @param {Array<{startTime,endTime,price,isGap,sortOrder}>} blocks
+ * Seed a specific date's override from the pitch's default template.
+ * Useful when admin wants to "fork" a day and tweak it.
  */
-export async function replacePitchBlocks(pitchId, blocks) {
+export async function seedDateFromDefault(pitchId, date) {
     await requireAdmin();
 
     const [pitch] = await db
@@ -445,43 +576,28 @@ export async function replacePitchBlocks(pitchId, blocks) {
         .limit(1);
     if (!pitch) throw new Error("Pitch not found");
 
-    const normalized = (blocks || []).map((b, i) => ({
-        startTime: String(b.startTime),
-        endTime: String(b.endTime),
-        price: b.isGap ? "0" : String(b.price ?? "0"),
-        isGap: Boolean(b.isGap),
-        sortOrder: i,
-    }));
+    const template = Array.isArray(pitch.defaultBlocks)
+        ? cloneAsTemplate(pitch.defaultBlocks.map((b, i) => ({ ...b, sortOrder: i })))
+        : [];
 
-    const check = validateBlocks(normalized);
-    if (!check.ok) throw new Error(check.error);
+    await db
+        .delete(timeBlocks)
+        .where(and(eq(timeBlocks.pitchId, pitchId), eq(timeBlocks.date, date)));
 
-    // Derive the pitch's new business hours from the block sequence.
-    const { openHour, closeHour } = deriveHours(normalized);
-
-    // Delete + reinsert. Bookings already have snapshots so history is safe.
-    await db.delete(timeBlocks).where(eq(timeBlocks.pitchId, pitchId));
-    if (normalized.length > 0) {
+    if (template.length > 0) {
         await db.insert(timeBlocks).values(
-            normalized.map((b) => ({
+            template.map((b) => ({
                 pitchId,
+                date,
                 startTime: b.startTime,
                 endTime: b.endTime,
                 price: b.price,
-                isGap: b.isGap,
                 sortOrder: b.sortOrder,
                 isActive: true,
             }))
         );
     }
 
-    // Persist derived hours on the pitch. This is what makes "extend the
-    // last block → closing time moves to 03:30" actually stick.
-    await db
-        .update(pitches)
-        .set({ openHour, closeHour })
-        .where(eq(pitches.id, pitchId));
-
     revalidateAdminAll();
-    return { ok: true, openHour, closeHour };
+    return { ok: true };
 }

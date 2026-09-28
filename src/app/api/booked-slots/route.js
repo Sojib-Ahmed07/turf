@@ -20,7 +20,7 @@ export async function GET(request) {
     try {
         const [startTimes, blocks] = await Promise.all([
             getBookedSlots(pitchId, date),
-            getTimeBlocksForPitch(pitchId),
+            getTimeBlocksForPitch(pitchId, date),
         ]);
         return NextResponse.json({ startTimes, blocks });
     } catch (err) {

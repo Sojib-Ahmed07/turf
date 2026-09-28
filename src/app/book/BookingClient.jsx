@@ -19,7 +19,8 @@ import { startBkashBooking } from "@/app/actions/bkash-payment";
 import { toDateKey } from "@/lib/time";
 import { format12h } from "@/lib/slots";
 
-const DAYS_AHEAD = 30;
+/* Show today + the next 2 days only. */
+const DAYS_AHEAD = 3;
 
 const SPORT_LABEL = {
     football: "Football",
@@ -74,18 +75,18 @@ export default function BookingClient({ pitches, user }) {
         const isPastDay = selectedDateKey < todayKey;
 
         return blocks.map((b) => {
-            const startMins = Number(b.startTime.slice(0, 2)) * 60 + Number(b.startTime.slice(3, 5));
+            const startMins =
+                Number(b.startTime.slice(0, 2)) * 60 + Number(b.startTime.slice(3, 5));
             const isPostMidnight = startMins < 6 * 60;
             const isBooked = bookedSet.has(b.startTime);
             const isPast =
-                isPastDay ||
-                (isToday && !isPostMidnight && startMins <= nowMins);
+                isPastDay || (isToday && !isPostMidnight && startMins <= nowMins);
             return {
                 ...b,
                 crossesMidnight: b.startTime >= "23:00" || isPostMidnight,
                 isBooked,
                 isPast,
-                isBookable: !b.isGap && !isBooked && !isPast,
+                isBookable: !isBooked && !isPast,
             };
         });
     }, [blocks, selectedDateKey, bookedSet]);
@@ -230,14 +231,14 @@ export default function BookingClient({ pitches, user }) {
                                 <CalendarIcon className="h-4 w-4 text-turf-500" />
                                 Choose Date
                             </h2>
-                            <div className="flex gap-2 overflow-x-auto pb-1">
-                                {days.slice(0, 14).map((d) => {
+                            <div className="grid grid-cols-3 gap-2">
+                                {days.map((d) => {
                                     const active = d.key === selectedDateKey;
                                     return (
                                         <button
                                             key={d.key}
                                             onClick={() => setSelectedDateKey(d.key)}
-                                            className={`flex min-w-[64px] flex-col items-center rounded-2xl border px-3 py-2.5 transition-all ${active
+                                            className={`flex flex-col items-center rounded-2xl border px-3 py-2.5 transition-all ${active
                                                     ? "border-turf-400 bg-turf-500 text-white shadow-glow"
                                                     : "border-ink-200 bg-white text-ink-700 hover:border-turf-300 hover:bg-turf-50"
                                                 }`}
@@ -293,22 +294,6 @@ export default function BookingClient({ pitches, user }) {
 
                         <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
                             {slots.map((slot) => {
-                                if (slot.isGap) {
-                                    return (
-                                        <div
-                                            key={`gap-${slot.id}`}
-                                            className="flex flex-col items-start justify-center rounded-2xl border border-dashed border-ink-200 bg-ink-50/60 px-3.5 py-3 text-left"
-                                        >
-                                            <span className="text-sm font-bold text-ink-400">
-                                                {format12h(slot.startTime)} – {format12h(slot.endTime)}
-                                            </span>
-                                            <span className="mt-1 text-[10px] font-bold uppercase tracking-wider text-ink-400">
-                                                Buffer
-                                            </span>
-                                        </div>
-                                    );
-                                }
-
                                 const disabled = !slot.isBookable || loadingSlots;
                                 const base =
                                     "group relative flex flex-col items-start justify-center rounded-2xl border px-3.5 py-3 text-left transition-all";
@@ -368,10 +353,6 @@ export default function BookingClient({ pitches, user }) {
                             <LegendDot className="border border-ink-200 bg-white" label="Available" />
                             <LegendDot className="border border-red-200 bg-red-50" label="Booked" />
                             <LegendDot className="border border-ink-100 bg-ink-50" label="Past" />
-                            <LegendDot
-                                className="border border-dashed border-ink-200 bg-ink-50/60"
-                                label="Buffer"
-                            />
                             <span className="inline-flex items-center gap-1.5">
                                 <Moon className="h-3 w-3 text-ink-400" />
                                 Crosses midnight
