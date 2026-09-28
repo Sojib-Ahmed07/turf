@@ -77,10 +77,14 @@ export async function getMyBookings() {
                 endTime: bookings.endTime,
                 totalPrice: bookings.totalPrice,
                 status: bookings.status,
+                paymentMethod: bookings.paymentMethod,
                 paymentStatus: bookings.paymentStatus,
+                bkashTrxID: bookings.bkashTrxID,
+                bkashPaymentID: bookings.bkashPaymentID,
                 createdAt: bookings.createdAt,
                 pitchName: pitches.name,
                 pitchImage: pitches.imageUrl,
+                pitchDescription: pitches.description,
             })
             .from(bookings)
             .innerJoin(pitches, eq(bookings.pitchId, pitches.id))
@@ -92,13 +96,17 @@ export async function getMyBookings() {
             pitchId: r.pitchId,
             pitchName: r.pitchName,
             pitchImage: r.pitchImage ?? null,
+            pitchDescription: r.pitchDescription ?? "",
             bookingDate: r.bookingDate,
             startTime: r.startTime,
             endTime: r.endTime,
             totalPrice: String(r.totalPrice),
             status: r.status,
+            paymentMethod: r.paymentMethod,
             paymentStatus: r.paymentStatus,
-            createdAt: r.createdAt,
+            bkashTrxID: r.bkashTrxID,
+            bkashPaymentID: r.bkashPaymentID,
+            createdAt: r.createdAt?.toISOString?.() ?? null,
         }));
     } catch (err) {
         console.error("getMyBookings error:", err);
@@ -132,5 +140,6 @@ export async function cancelBooking(bookingId) {
 
     revalidatePath("/bookings");
     revalidatePath("/book");
+    revalidatePath("/profile");
     return { ok: true };
 }
