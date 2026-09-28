@@ -11,10 +11,10 @@ export default async function AdminPitchesPage() {
         <div className="space-y-6">
             <div>
                 <h1 className="text-2xl font-extrabold tracking-tight text-ink-900 sm:text-3xl">
-                    Pitches
+                    Grounds
                 </h1>
                 <p className="mt-1 text-sm text-ink-500">
-                    {pitches.length} pitch{pitches.length === 1 ? "" : "es"} ·{" "}
+                    {pitches.length} ground{pitches.length === 1 ? "" : "s"} ·{" "}
                     {pitches.filter((p) => p.isActive).length} active
                 </p>
             </div>

@@ -11,6 +11,7 @@ import {
 import { sql } from "drizzle-orm";
 import { user } from "./auth-schema.js";
 import { pitches } from "./pitch-schema.js";
+import { timeBlocks } from "./timeblock-schema.js";
 
 export const bookings = pgTable(
     "bookings",
@@ -22,15 +23,19 @@ export const bookings = pgTable(
         pitchId: uuid("pitch_id")
             .notNull()
             .references(() => pitches.id, { onDelete: "cascade" }),
+        // Snapshot of the block the user booked. Nullable for safety but
+        // every new booking sets it.
+        timeBlockId: uuid("time_block_id").references(() => timeBlocks.id, {
+            onDelete: "set null",
+        }),
         bookingDate: text("booking_date").notNull(),
+        // Snapshots — pricing/time can change on the block later without
+        // breaking historical bookings.
         startTime: text("start_time").notNull(),
         endTime: text("end_time").notNull(),
         totalPrice: decimal("total_price", { precision: 10, scale: 2 }).notNull(),
-        // "pending" (awaiting bkash) | "confirmed" (paid) | "cancelled"
         status: text("status").notNull().default("pending"),
-        // Always "bkash" now — kept for future extensibility
         paymentMethod: text("payment_method").notNull().default("bkash"),
-        // "pending" | "paid"
         paymentStatus: text("payment_status").notNull().default("pending"),
         bkashPaymentID: text("bkash_payment_id"),
         bkashTrxID: text("bkash_trx_id"),

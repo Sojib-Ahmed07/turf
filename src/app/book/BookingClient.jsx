@@ -16,10 +16,17 @@ import {
     Moon,
 } from "lucide-react";
 import { startBkashBooking } from "@/app/actions/bkash-payment";
-import { generateTimeSlots, toDateKey, format12h } from "@/lib/time";
+import { toDateKey } from "@/lib/time";
+import { format12h } from "@/lib/slots";
 
 const DAYS_AHEAD = 30;
-const BOOKING_FEE = 1000;
+
+const SPORT_LABEL = {
+    football: "Football",
+    cricket: "Cricket",
+    badminton: "Badminton",
+    swimming_pool: "Swimming Pool",
+};
 
 function buildDateRange() {
     const today = startOfDay(new Date());
@@ -45,16 +52,16 @@ function formatBDT(value) {
 
 export default function BookingClient({ pitches, user }) {
     const [isPending, startTransition] = useTransition();
-
     const days = useMemo(() => buildDateRange(), []);
 
     const [selectedPitchId, setSelectedPitchId] = useState(pitches[0]?.id ?? "");
     const [selectedDateKey, setSelectedDateKey] = useState(days[0].key);
+    const [blocks, setBlocks] = useState([]);
     const [bookedSet, setBookedSet] = useState(new Set());
     const [loadingSlots, setLoadingSlots] = useState(false);
     const [error, setError] = useState("");
 
-    const [pendingSlot, setPendingSlot] = useState(null);
+    const [pendingBlock, setPendingBlock] = useState(null);
     const [modalError, setModalError] = useState("");
 
     const selectedPitch = pitches.find((p) => p.id === selectedPitchId);
@@ -62,37 +69,34 @@ export default function BookingClient({ pitches, user }) {
     const slots = useMemo(() => {
         const today = new Date();
         const todayKey = toDateKey(today);
-        const nowKey = `${String(today.getHours()).padStart(2, "0")}:${String(today.getMinutes()).padStart(2, "0")}`;
+        const nowMins = today.getHours() * 60 + today.getMinutes();
         const isToday = selectedDateKey === todayKey;
         const isPastDay = selectedDateKey < todayKey;
 
-        return generateTimeSlots().map(({ startTime, endTime, crossesMidnight }) => {
-            const isBooked = bookedSet.has(startTime);
+        return blocks.map((b) => {
+            const startMins = Number(b.startTime.slice(0, 2)) * 60 + Number(b.startTime.slice(3, 5));
+            const isPostMidnight = startMins < 6 * 60;
+            const isBooked = bookedSet.has(b.startTime);
             const isPast =
                 isPastDay ||
-                (isToday && !crossesMidnight && startTime <= nowKey);
+                (isToday && !isPostMidnight && startMins <= nowMins);
             return {
-                startTime,
-                endTime,
-                crossesMidnight,
+                ...b,
+                crossesMidnight: b.startTime >= "23:00" || isPostMidnight,
                 isBooked,
                 isPast,
-                isBookable: !isBooked && !isPast,
+                isBookable: !b.isGap && !isBooked && !isPast,
             };
         });
-    }, [selectedDateKey, bookedSet]);
+    }, [blocks, selectedDateKey, bookedSet]);
 
     useEffect(() => {
         if (!selectedPitchId || !selectedDateKey) return;
         let cancelled = false;
 
         (async () => {
-            await Promise.resolve();
-            if (cancelled) return;
-
             setLoadingSlots(true);
             setError("");
-
             try {
                 const res = await fetch(
                     `/api/booked-slots?pitchId=${selectedPitchId}&date=${selectedDateKey}`,
@@ -101,11 +105,13 @@ export default function BookingClient({ pitches, user }) {
                 if (!res.ok) throw new Error("Failed to load slots");
                 const data = await res.json();
                 if (cancelled) return;
+                setBlocks(data.blocks ?? []);
                 setBookedSet(new Set(data.startTimes ?? []));
             } catch (err) {
                 if (cancelled) return;
                 console.error(err);
                 setError("Could not load availability. Please try again.");
+                setBlocks([]);
                 setBookedSet(new Set());
             } finally {
                 if (!cancelled) setLoadingSlots(false);
@@ -118,27 +124,26 @@ export default function BookingClient({ pitches, user }) {
     }, [selectedPitchId, selectedDateKey]);
 
     function openModal(slot) {
-        setPendingSlot(slot);
+        setPendingBlock(slot);
         setModalError("");
     }
 
     function closeModal() {
         if (isPending) return;
-        setPendingSlot(null);
+        setPendingBlock(null);
         setModalError("");
     }
 
     function handleConfirm() {
-        if (!pendingSlot || !selectedPitch) return;
+        if (!pendingBlock || !selectedPitch) return;
         setModalError("");
 
         startTransition(async () => {
             try {
                 const { bkashURL } = await startBkashBooking({
                     pitchId: selectedPitchId,
+                    timeBlockId: pendingBlock.id,
                     bookingDate: selectedDateKey,
-                    startTime: pendingSlot.startTime,
-                    endTime: pendingSlot.endTime,
                 });
                 window.location.href = bkashURL;
             } catch (err) {
@@ -171,7 +176,7 @@ export default function BookingClient({ pitches, user }) {
                         </span>
                     </h1>
                     <p className="mt-2 text-sm text-ink-600 sm:text-base">
-                        Pay {formatBDT(BOOKING_FEE)} via bKash to lock your 90-minute slot.
+                        Choose a ground, date and slot — pay securely via bKash.
                     </p>
                 </motion.div>
 
@@ -187,7 +192,7 @@ export default function BookingClient({ pitches, user }) {
                         <div className="rounded-3xl border border-ink-200 bg-white p-5 shadow-sm">
                             <h2 className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-ink-500">
                                 <MapPin className="h-4 w-4 text-turf-500" />
-                                Choose Pitch
+                                Choose Ground
                             </h2>
                             <div className="space-y-2">
                                 {pitches.map((p) => {
@@ -201,9 +206,14 @@ export default function BookingClient({ pitches, user }) {
                                                     : "border-ink-200 bg-white hover:border-turf-300 hover:bg-turf-50/50"
                                                 }`}
                                         >
-                                            <p className="truncate text-sm font-bold text-ink-900">
-                                                {p.name}
-                                            </p>
+                                            <div className="flex items-center justify-between gap-2">
+                                                <p className="truncate text-sm font-bold text-ink-900">
+                                                    {p.name}
+                                                </p>
+                                                <span className="shrink-0 rounded-full bg-ink-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-ink-600">
+                                                    {SPORT_LABEL[p.sport] ?? p.sport}
+                                                </span>
+                                            </div>
                                             {p.description && (
                                                 <p className="mt-0.5 truncate text-xs text-ink-500">
                                                     {p.description}
@@ -275,13 +285,33 @@ export default function BookingClient({ pitches, user }) {
                             )}
                         </div>
 
+                        {!loadingSlots && slots.length === 0 && (
+                            <div className="rounded-2xl border border-dashed border-ink-300 bg-ink-50 p-10 text-center text-sm text-ink-500">
+                                No slots configured for this ground yet.
+                            </div>
+                        )}
+
                         <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
                             {slots.map((slot) => {
-                                const disabled = !slot.isBookable || loadingSlots;
+                                if (slot.isGap) {
+                                    return (
+                                        <div
+                                            key={`gap-${slot.id}`}
+                                            className="flex flex-col items-start justify-center rounded-2xl border border-dashed border-ink-200 bg-ink-50/60 px-3.5 py-3 text-left"
+                                        >
+                                            <span className="text-sm font-bold text-ink-400">
+                                                {format12h(slot.startTime)} – {format12h(slot.endTime)}
+                                            </span>
+                                            <span className="mt-1 text-[10px] font-bold uppercase tracking-wider text-ink-400">
+                                                Buffer
+                                            </span>
+                                        </div>
+                                    );
+                                }
 
+                                const disabled = !slot.isBookable || loadingSlots;
                                 const base =
                                     "group relative flex flex-col items-start justify-center rounded-2xl border px-3.5 py-3 text-left transition-all";
-
                                 let cls =
                                     "border-ink-200 bg-white text-ink-700 hover:border-turf-400 hover:bg-turf-50 hover:shadow-sm";
                                 if (slot.isBooked)
@@ -296,7 +326,7 @@ export default function BookingClient({ pitches, user }) {
 
                                 return (
                                     <button
-                                        key={slot.startTime}
+                                        key={slot.id}
                                         disabled={disabled}
                                         onClick={() => openModal(slot)}
                                         className={`${base} ${cls}`}
@@ -309,7 +339,6 @@ export default function BookingClient({ pitches, user }) {
                                                 <Moon className="h-3.5 w-3.5 opacity-60" />
                                             )}
                                         </div>
-
                                         <div className="mt-1 flex w-full items-center justify-between">
                                             {slot.isBooked && (
                                                 <span className="text-[10px] font-bold uppercase tracking-wider">
@@ -327,7 +356,7 @@ export default function BookingClient({ pitches, user }) {
                                                 </span>
                                             )}
                                             <span className="text-[10px] font-bold text-turf-700">
-                                                {formatBDT(BOOKING_FEE)}
+                                                {formatBDT(slot.price)}
                                             </span>
                                         </div>
                                     </button>
@@ -336,17 +365,12 @@ export default function BookingClient({ pitches, user }) {
                         </div>
 
                         <div className="mt-6 flex flex-wrap items-center gap-4 border-t border-ink-100 pt-4 text-[11px] text-ink-500">
+                            <LegendDot className="border border-ink-200 bg-white" label="Available" />
+                            <LegendDot className="border border-red-200 bg-red-50" label="Booked" />
+                            <LegendDot className="border border-ink-100 bg-ink-50" label="Past" />
                             <LegendDot
-                                className="border border-ink-200 bg-white"
-                                label="Available"
-                            />
-                            <LegendDot
-                                className="border border-red-200 bg-red-50"
-                                label="Booked"
-                            />
-                            <LegendDot
-                                className="border border-ink-100 bg-ink-50"
-                                label="Past"
+                                className="border border-dashed border-ink-200 bg-ink-50/60"
+                                label="Buffer"
                             />
                             <span className="inline-flex items-center gap-1.5">
                                 <Moon className="h-3 w-3 text-ink-400" />
@@ -358,7 +382,7 @@ export default function BookingClient({ pitches, user }) {
             </div>
 
             <AnimatePresence>
-                {pendingSlot && selectedPitch && (
+                {pendingBlock && selectedPitch && (
                     <motion.div
                         key="backdrop"
                         initial={{ opacity: 0 }}
@@ -382,7 +406,7 @@ export default function BookingClient({ pitches, user }) {
                                         Confirm your booking
                                     </h2>
                                     <p className="mt-0.5 text-sm text-ink-500">
-                                        Pay {formatBDT(BOOKING_FEE)} via bKash to confirm.
+                                        Pay {formatBDT(pendingBlock.price)} via bKash to confirm.
                                     </p>
                                 </div>
                                 <button
@@ -397,24 +421,25 @@ export default function BookingClient({ pitches, user }) {
 
                             <div className="space-y-5 p-5 sm:p-6">
                                 <div className="rounded-2xl border border-ink-100 bg-ink-50 p-4 text-sm">
-                                    <Row label="Pitch" value={selectedPitch.name} />
+                                    <Row label="Ground" value={selectedPitch.name} />
+                                    <Row
+                                        label="Sport"
+                                        value={SPORT_LABEL[selectedPitch.sport] ?? selectedPitch.sport}
+                                    />
                                     <Row
                                         label="Date"
-                                        value={format(
-                                            new Date(selectedDateKey),
-                                            "EEE, MMM d, yyyy"
-                                        )}
+                                        value={format(new Date(selectedDateKey), "EEE, MMM d, yyyy")}
                                     />
                                     <Row
                                         label="Time"
-                                        value={`${format12h(pendingSlot.startTime)} – ${format12h(pendingSlot.endTime)}`}
+                                        value={`${format12h(pendingBlock.startTime)} – ${format12h(pendingBlock.endTime)}`}
                                     />
-                                    {pendingSlot.crossesMidnight && (
+                                    {pendingBlock.crossesMidnight && (
                                         <Row label="Note" value="Ends after midnight" />
                                     )}
                                     <Row
                                         label="Total"
-                                        value={formatBDT(BOOKING_FEE)}
+                                        value={formatBDT(pendingBlock.price)}
                                         highlight
                                     />
                                 </div>
@@ -424,9 +449,7 @@ export default function BookingClient({ pitches, user }) {
                                         <Smartphone className="h-4 w-4" />
                                     </div>
                                     <div className="min-w-0">
-                                        <p className="text-sm font-bold text-ink-900">
-                                            bKash
-                                        </p>
+                                        <p className="text-sm font-bold text-ink-900">bKash</p>
                                         <p className="text-[11px] text-ink-500">
                                             You&apos;ll be redirected to complete the payment.
                                         </p>
@@ -467,7 +490,7 @@ export default function BookingClient({ pitches, user }) {
                                     ) : (
                                         <>
                                             <Smartphone className="h-4 w-4" />
-                                            Pay {formatBDT(BOOKING_FEE)} with bKash
+                                            Pay {formatBDT(pendingBlock.price)} with bKash
                                         </>
                                     )}
                                 </button>
@@ -484,13 +507,7 @@ function Row({ label, value, highlight = false }) {
     return (
         <div className="flex items-center justify-between border-b border-ink-100 py-1.5 last:border-0">
             <span className="text-ink-500">{label}</span>
-            <span
-                className={
-                    highlight
-                        ? "font-extrabold text-turf-700"
-                        : "font-semibold text-ink-900"
-                }
-            >
+            <span className={highlight ? "font-extrabold text-turf-700" : "font-semibold text-ink-900"}>
                 {value}
             </span>
         </div>

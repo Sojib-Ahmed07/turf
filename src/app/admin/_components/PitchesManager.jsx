@@ -11,20 +11,33 @@ import {
     Loader2,
     AlertCircle,
     Image as ImageIcon,
+    SlidersHorizontal,
 } from "lucide-react";
 import { togglePitchActive, upsertPitch } from "@/app/actions/admin";
+import SlotEditor from "./SlotEditor";
 
-function formatINR(v) {
+const SPORTS = [
+    { value: "football", label: "Football" },
+    { value: "cricket", label: "Cricket" },
+    { value: "badminton", label: "Badminton" },
+    { value: "swimming_pool", label: "Swimming Pool" },
+];
+
+function formatBDT(v) {
     const n = Number(v);
-    if (!n) return "₹0";
-    return `₹${n.toFixed(0)}`;
+    if (!n) return "৳0";
+    return `৳${n.toFixed(0)}`;
 }
 
 const EMPTY_FORM = {
     id: null,
     name: "",
     description: "",
+    sport: "football",
     hourlyRate: "",
+    openHour: 6,
+    closeHour: 3,
+    defaultSlotMinutes: 90,
     imageUrl: "",
     isActive: true,
 };
@@ -33,7 +46,8 @@ export default function PitchesManager({ initialPitches }) {
     const [pitches, setPitches] = useState(initialPitches);
     const [isPending, startTransition] = useTransition();
     const [error, setError] = useState("");
-    const [editing, setEditing] = useState(null); // form data or null
+    const [editing, setEditing] = useState(null);
+    const [editingSlotsFor, setEditingSlotsFor] = useState(null);
 
     function openNew() {
         setEditing({ ...EMPTY_FORM });
@@ -44,7 +58,11 @@ export default function PitchesManager({ initialPitches }) {
             id: pitch.id,
             name: pitch.name,
             description: pitch.description ?? "",
+            sport: pitch.sport,
             hourlyRate: pitch.hourlyRate,
+            openHour: pitch.openHour,
+            closeHour: pitch.closeHour,
+            defaultSlotMinutes: pitch.defaultSlotMinutes,
             imageUrl: pitch.imageUrl ?? "",
             isActive: pitch.isActive,
         });
@@ -62,9 +80,7 @@ export default function PitchesManager({ initialPitches }) {
             try {
                 const res = await togglePitchActive(id);
                 setPitches((prev) =>
-                    prev.map((p) =>
-                        p.id === id ? { ...p, isActive: res.isActive } : p
-                    )
+                    prev.map((p) => (p.id === id ? { ...p, isActive: res.isActive } : p))
                 );
             } catch (err) {
                 setError(err?.message ?? "Failed to toggle pitch.");
@@ -79,16 +95,19 @@ export default function PitchesManager({ initialPitches }) {
 
         startTransition(async () => {
             try {
-                await upsertPitch({
+                const res = await upsertPitch({
                     id: editing.id,
                     name: editing.name.trim(),
                     description: editing.description.trim() || null,
+                    sport: editing.sport,
                     hourlyRate: editing.hourlyRate,
+                    openHour: Number(editing.openHour),
+                    closeHour: Number(editing.closeHour),
+                    defaultSlotMinutes: Number(editing.defaultSlotMinutes),
                     imageUrl: editing.imageUrl.trim() || null,
                     isActive: editing.isActive,
                 });
 
-                // Best-effort local update (server will revalidate on next visit)
                 if (editing.id) {
                     setPitches((prev) =>
                         prev.map((p) =>
@@ -97,7 +116,11 @@ export default function PitchesManager({ initialPitches }) {
                                     ...p,
                                     name: editing.name,
                                     description: editing.description,
+                                    sport: editing.sport,
                                     hourlyRate: String(editing.hourlyRate),
+                                    openHour: Number(editing.openHour),
+                                    closeHour: Number(editing.closeHour),
+                                    defaultSlotMinutes: Number(editing.defaultSlotMinutes),
                                     imageUrl: editing.imageUrl || null,
                                     isActive: editing.isActive,
                                 }
@@ -105,7 +128,6 @@ export default function PitchesManager({ initialPitches }) {
                         )
                     );
                 } else {
-                    // Reload from server so the new row gets a real id
                     window.location.reload();
                 }
                 setEditing(null);
@@ -123,7 +145,7 @@ export default function PitchesManager({ initialPitches }) {
                     className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-turf-500 to-turf-600 px-5 py-2.5 text-sm font-bold text-white shadow-glow transition-all hover:from-turf-400 hover:to-turf-500 active:scale-95"
                 >
                     <Plus className="h-4 w-4" />
-                    Add pitch
+                    Add ground
                 </button>
             </div>
 
@@ -156,10 +178,11 @@ export default function PitchesManager({ initialPitches }) {
                                     <ImageIcon className="h-8 w-8 text-turf-400" />
                                 </div>
                             )}
+                            <span className="absolute right-3 top-3 rounded-full bg-ink-900/70 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white">
+                                {SPORTS.find((s) => s.value === p.sport)?.label ?? p.sport}
+                            </span>
                             <span
-                                className={`absolute right-3 top-3 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${p.isActive
-                                        ? "bg-turf-500 text-white"
-                                        : "bg-ink-800/80 text-white"
+                                className={`absolute left-3 top-3 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${p.isActive ? "bg-turf-500 text-white" : "bg-ink-800/80 text-white"
                                     }`}
                             >
                                 {p.isActive ? "Active" : "Inactive"}
@@ -167,9 +190,7 @@ export default function PitchesManager({ initialPitches }) {
                         </div>
 
                         <div className="p-5">
-                            <h3 className="truncate text-base font-bold text-ink-900">
-                                {p.name}
-                            </h3>
+                            <h3 className="truncate text-base font-bold text-ink-900">{p.name}</h3>
                             <p className="mt-0.5 line-clamp-2 h-9 text-xs text-ink-500">
                                 {p.description || "No description"}
                             </p>
@@ -177,14 +198,21 @@ export default function PitchesManager({ initialPitches }) {
                             <div className="mt-4 flex items-center justify-between border-t border-ink-100 pt-4">
                                 <div>
                                     <p className="text-lg font-extrabold text-turf-700">
-                                        {formatINR(p.hourlyRate)}
+                                        {formatBDT(p.hourlyRate)}
                                     </p>
                                     <p className="text-[10px] uppercase tracking-wider text-ink-400">
-                                        per hour
+                                        base / hour · {p.defaultSlotMinutes}m slots
                                     </p>
                                 </div>
 
                                 <div className="flex items-center gap-1.5">
+                                    <button
+                                        onClick={() => setEditingSlotsFor(p.id)}
+                                        title="Manage slots"
+                                        className="rounded-lg border border-turf-200 bg-turf-50 p-2 text-turf-700 transition-colors hover:bg-turf-100"
+                                    >
+                                        <SlidersHorizontal className="h-4 w-4" />
+                                    </button>
                                     <button
                                         onClick={() => handleToggle(p.id)}
                                         disabled={isPending}
@@ -213,13 +241,12 @@ export default function PitchesManager({ initialPitches }) {
                 {pitches.length === 0 && (
                     <div className="col-span-full rounded-3xl border border-dashed border-ink-300 bg-white p-12 text-center">
                         <p className="text-sm text-ink-500">
-                            No pitches yet. Click &ldquo;Add pitch&rdquo; to create one.
+                            No grounds yet. Click &ldquo;Add ground&rdquo; to create one.
                         </p>
                     </div>
                 )}
             </div>
 
-            {/* Modal */}
             <AnimatePresence>
                 {editing && (
                     <motion.div
@@ -241,7 +268,7 @@ export default function PitchesManager({ initialPitches }) {
                                 <div className="flex items-start justify-between border-b border-ink-100 p-5">
                                     <div>
                                         <h2 className="text-lg font-extrabold text-ink-900">
-                                            {editing.id ? "Edit pitch" : "New pitch"}
+                                            {editing.id ? "Edit ground" : "New ground"}
                                         </h2>
                                         <p className="mt-0.5 text-sm text-ink-500">
                                             Fill in the details below.
@@ -262,52 +289,104 @@ export default function PitchesManager({ initialPitches }) {
                                         value={editing.name}
                                         onChange={(v) => setEditing({ ...editing, name: v })}
                                         required
-                                        placeholder="Pitch A — 5v5"
+                                        placeholder="Ground A — 5v5"
                                     />
                                     <Field
                                         label="Description"
                                         value={editing.description}
-                                        onChange={(v) =>
-                                            setEditing({ ...editing, description: v })
-                                        }
+                                        onChange={(v) => setEditing({ ...editing, description: v })}
                                         placeholder="Indoor turf, 5-a-side"
                                     />
                                     <div className="grid grid-cols-2 gap-4">
-                                        <Field
-                                            label="Hourly rate (₹)"
-                                            type="number"
-                                            value={editing.hourlyRate}
-                                            onChange={(v) =>
-                                                setEditing({ ...editing, hourlyRate: v })
-                                            }
-                                            required
-                                            placeholder="800"
-                                        />
                                         <div>
                                             <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ink-500">
-                                                Status
+                                                Sport
                                             </label>
                                             <select
-                                                value={editing.isActive ? "1" : "0"}
+                                                value={editing.sport}
                                                 onChange={(e) =>
-                                                    setEditing({
-                                                        ...editing,
-                                                        isActive: e.target.value === "1",
-                                                    })
+                                                    setEditing({ ...editing, sport: e.target.value })
                                                 }
                                                 className="w-full rounded-xl border border-ink-200 bg-white px-4 py-3 text-sm text-ink-900 focus:border-turf-400 focus:outline-none focus:ring-2 focus:ring-turf-100"
                                             >
-                                                <option value="1">Active</option>
-                                                <option value="0">Inactive</option>
+                                                {SPORTS.map((s) => (
+                                                    <option key={s.value} value={s.value}>
+                                                        {s.label}
+                                                    </option>
+                                                ))}
                                             </select>
                                         </div>
+                                        <Field
+                                            label="Base rate (৳/hour)"
+                                            type="number"
+                                            value={editing.hourlyRate}
+                                            onChange={(v) => setEditing({ ...editing, hourlyRate: v })}
+                                            required
+                                            placeholder="1000"
+                                        />
                                     </div>
+
+                                    <div className="grid grid-cols-3 gap-4">
+                                        <Field
+                                            label="Open hour (0-23)"
+                                            type="number"
+                                            value={editing.openHour}
+                                            onChange={(v) => setEditing({ ...editing, openHour: v })}
+                                            required
+                                            placeholder="6"
+                                        />
+                                        <Field
+                                            label="Close hour (0-23)"
+                                            type="number"
+                                            value={editing.closeHour}
+                                            onChange={(v) => setEditing({ ...editing, closeHour: v })}
+                                            required
+                                            placeholder="3"
+                                        />
+                                        <Field
+                                            label="Default slot (min)"
+                                            type="number"
+                                            value={editing.defaultSlotMinutes}
+                                            onChange={(v) =>
+                                                setEditing({ ...editing, defaultSlotMinutes: v })
+                                            }
+                                            required
+                                            placeholder="90"
+                                        />
+                                    </div>
+
+                                    <div>
+                                        <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ink-500">
+                                            Status
+                                        </label>
+                                        <select
+                                            value={editing.isActive ? "1" : "0"}
+                                            onChange={(e) =>
+                                                setEditing({
+                                                    ...editing,
+                                                    isActive: e.target.value === "1",
+                                                })
+                                            }
+                                            className="w-full rounded-xl border border-ink-200 bg-white px-4 py-3 text-sm text-ink-900 focus:border-turf-400 focus:outline-none focus:ring-2 focus:ring-turf-100"
+                                        >
+                                            <option value="1">Active</option>
+                                            <option value="0">Inactive</option>
+                                        </select>
+                                    </div>
+
                                     <Field
                                         label="Image URL"
                                         value={editing.imageUrl}
                                         onChange={(v) => setEditing({ ...editing, imageUrl: v })}
                                         placeholder="https://…"
                                     />
+
+                                    {!editing.id && (
+                                        <p className="rounded-xl border border-turf-100 bg-turf-50 px-3 py-2 text-[11px] text-turf-700">
+                                            Saving will auto-generate a slot grid using the default
+                                            duration. You can fine-tune it from &ldquo;Manage slots&rdquo;.
+                                        </p>
+                                    )}
                                 </div>
 
                                 <div className="flex gap-3 border-t border-ink-100 p-5">
@@ -332,13 +411,23 @@ export default function PitchesManager({ initialPitches }) {
                                         ) : editing.id ? (
                                             "Save changes"
                                         ) : (
-                                            "Create pitch"
+                                            "Create ground"
                                         )}
                                     </button>
                                 </div>
                             </form>
                         </motion.div>
                     </motion.div>
+                )}
+            </AnimatePresence>
+
+            <AnimatePresence>
+                {editingSlotsFor && (
+                    <SlotEditor
+                        key="slot-editor"
+                        pitchId={editingSlotsFor}
+                        onClose={() => setEditingSlotsFor(null)}
+                    />
                 )}
             </AnimatePresence>
         </>

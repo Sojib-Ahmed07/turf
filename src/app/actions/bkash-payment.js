@@ -3,26 +3,25 @@
 
 import { db } from "@/db";
 import { bookings, pitches } from "@/db/schema";
+import { timeBlocks } from "@/db/timeblock-schema";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { createBkashPayment, executeBkashPayment } from "@/lib/bkash";
-
-/** Flat booking fee in BDT */
-const BOOKING_FEE = 1000;
+import { minutesBetween } from "@/lib/slots";
 
 /**
  * Create a pending booking and start a bKash payment session.
+ * Price is authoritative server-side — read from the time block.
  */
-export async function startBkashBooking({
-    pitchId,
-    bookingDate,
-    startTime,
-    endTime,
-}) {
+export async function startBkashBooking({ pitchId, timeBlockId, bookingDate }) {
     const session = await auth.api.getSession({ headers: await headers() });
     if (!session?.user) throw new Error("Unauthorized");
+
+    if (!pitchId || !timeBlockId || !bookingDate) {
+        throw new Error("Missing booking details.");
+    }
 
     // Validate pitch
     const [pitch] = await db
@@ -31,18 +30,47 @@ export async function startBkashBooking({
         .where(and(eq(pitches.id, pitchId), eq(pitches.isActive, true)))
         .limit(1);
 
-    if (!pitch) throw new Error("Pitch not found or inactive.");
+    if (!pitch) throw new Error("Ground not found or inactive.");
 
-    // Reject past slots
-    const today = new Date();
-    const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    // Load and validate block
+    const [block] = await db
+        .select()
+        .from(timeBlocks)
+        .where(
+            and(
+                eq(timeBlocks.id, timeBlockId),
+                eq(timeBlocks.pitchId, pitchId),
+                eq(timeBlocks.isActive, true)
+            )
+        )
+        .limit(1);
+
+    if (!block) throw new Error("Time block not found.");
+    if (block.isGap) throw new Error("This time is not bookable.");
+    if (Number(block.price) <= 0) throw new Error("Invalid block price.");
+
+    const { startTime, endTime } = block;
+    const price = Number(block.price);
+
+    // Reject past slots (respects midnight-crossing convention)
+    const now = new Date();
+    const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
     if (bookingDate < todayKey) throw new Error("Cannot book a slot in the past.");
+
     if (bookingDate === todayKey) {
-        const nowKey = `${String(today.getHours()).padStart(2, "0")}:${String(today.getMinutes()).padStart(2, "0")}`;
-        if (startTime <= nowKey) throw new Error("This slot has already passed.");
+        const nowMins = now.getHours() * 60 + now.getMinutes();
+        const startMins = Number(startTime.slice(0, 2)) * 60 + Number(startTime.slice(3, 5));
+        // startMins < openHour*60 means it's a post-midnight slot belonging to
+        // today's business day — always in the future relative to "now" during
+        // the same business day. Only reject if startMins <= nowMins AND the
+        // slot is in the morning block (>= open hour).
+        const isPostMidnight = startMins < 6 * 60;
+        if (!isPostMidnight && startMins <= nowMins) {
+            throw new Error("This slot has already passed.");
+        }
     }
 
-    // Conflict check
+    // Conflict check (application level — the partial unique index is the last line)
     const existing = await db
         .select()
         .from(bookings)
@@ -68,10 +96,11 @@ export async function startBkashBooking({
             .values({
                 userId: session.user.id,
                 pitchId,
+                timeBlockId: block.id,
                 bookingDate,
                 startTime,
                 endTime,
-                totalPrice: String(BOOKING_FEE),
+                totalPrice: String(price),
                 status: "pending",
                 paymentMethod: "bkash",
                 paymentStatus: "pending",
@@ -88,19 +117,17 @@ export async function startBkashBooking({
         throw err;
     }
 
-    // Start bKash
     const origin = process.env.BETTER_AUTH_URL || "http://localhost:3000";
     const callbackURL = `${origin}/api/bkash/callback?bookingId=${booking.id}`;
 
     let payment;
     try {
         payment = await createBkashPayment({
-            amount: BOOKING_FEE,
+            amount: price,
             payerReference: booking.id,
             callbackURL,
         });
     } catch (err) {
-        // Free up slot
         await db
             .update(bookings)
             .set({ status: "cancelled" })
@@ -117,12 +144,12 @@ export async function startBkashBooking({
         bookingId: booking.id,
         paymentID: payment.paymentID,
         bkashURL: payment.bkashURL,
+        amount: price,
     };
 }
 
 /**
  * Execute the payment and confirm the booking if successful.
- * Called from the bKash callback route (NOT from a page render).
  */
 export async function finalizeBkashPayment({ bookingId, paymentID }) {
     const [booking] = await db

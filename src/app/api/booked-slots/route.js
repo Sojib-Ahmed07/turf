@@ -1,6 +1,9 @@
 // src/app/api/booked-slots/route.js
 import { NextResponse } from "next/server";
-import { getBookedSlots } from "@/app/actions/booking";
+import {
+    getBookedSlots,
+    getTimeBlocksForPitch,
+} from "@/app/actions/booking";
 
 export async function GET(request) {
     const { searchParams } = new URL(request.url);
@@ -15,12 +18,15 @@ export async function GET(request) {
     }
 
     try {
-        const startTimes = await getBookedSlots(pitchId, date);
-        return NextResponse.json({ startTimes });
+        const [startTimes, blocks] = await Promise.all([
+            getBookedSlots(pitchId, date),
+            getTimeBlocksForPitch(pitchId),
+        ]);
+        return NextResponse.json({ startTimes, blocks });
     } catch (err) {
         console.error("booked-slots route error:", err);
         return NextResponse.json(
-            { error: "Failed to load booked slots" },
+            { error: "Failed to load slots" },
             { status: 500 }
         );
     }

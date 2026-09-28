@@ -3,9 +3,10 @@
 
 import { db } from "@/db";
 import { bookings, pitches } from "@/db/schema";
+import { timeBlocks } from "@/db/timeblock-schema";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
-import { eq, and, ne, desc } from "drizzle-orm";
+import { eq, and, ne, desc, asc } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
 /* -------------------------------------------------------------- */
@@ -23,7 +24,11 @@ export async function getPitches() {
             id: p.id,
             name: p.name,
             description: p.description ?? "",
+            sport: p.sport,
             hourlyRate: String(p.hourlyRate),
+            openHour: p.openHour,
+            closeHour: p.closeHour,
+            defaultSlotMinutes: p.defaultSlotMinutes,
             imageUrl: p.imageUrl ?? null,
             isActive: p.isActive,
         }));
@@ -31,6 +36,31 @@ export async function getPitches() {
         console.error("getPitches error:", err);
         throw new Error("Failed to load pitches.");
     }
+}
+
+/* -------------------------------------------------------------- */
+/* Time blocks (for booking grid)                                  */
+/* -------------------------------------------------------------- */
+
+export async function getTimeBlocksForPitch(pitchId) {
+    if (!pitchId) return [];
+
+    const rows = await db
+        .select()
+        .from(timeBlocks)
+        .where(
+            and(eq(timeBlocks.pitchId, pitchId), eq(timeBlocks.isActive, true))
+        )
+        .orderBy(asc(timeBlocks.sortOrder));
+
+    return rows.map((b) => ({
+        id: b.id,
+        startTime: b.startTime,
+        endTime: b.endTime,
+        price: String(b.price),
+        isGap: b.isGap,
+        sortOrder: b.sortOrder,
+    }));
 }
 
 /* -------------------------------------------------------------- */
@@ -83,6 +113,7 @@ export async function getMyBookings() {
                 bkashPaymentID: bookings.bkashPaymentID,
                 createdAt: bookings.createdAt,
                 pitchName: pitches.name,
+                pitchSport: pitches.sport,
                 pitchImage: pitches.imageUrl,
                 pitchDescription: pitches.description,
             })
@@ -95,6 +126,7 @@ export async function getMyBookings() {
             id: r.id,
             pitchId: r.pitchId,
             pitchName: r.pitchName,
+            pitchSport: r.pitchSport,
             pitchImage: r.pitchImage ?? null,
             pitchDescription: r.pitchDescription ?? "",
             bookingDate: r.bookingDate,
