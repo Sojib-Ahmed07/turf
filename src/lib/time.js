@@ -10,8 +10,7 @@ export const SLOT_MINUTES = 90;   // each slot is 90 minutes
 
 /** Total slots per day across the full window (6:00 AM → 1:30 AM next day) */
 export const SLOTS_PER_DAY = 14;  // 6:00, 7:30, 9:00, 10:30, 12:00, 13:30,
-// 15:00, 16:30, 18:00, 19:30, 21:00, 22:30,
-// 00:00, 01:30
+
 
 /* -------------------------------------------------------------- */
 /* Internal helpers                                                */
