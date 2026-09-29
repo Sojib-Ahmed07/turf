@@ -22,6 +22,9 @@ import { format12h } from "@/lib/slots";
 /* Today + the next 29 days = 30 day booking window. */
 const DAYS_AHEAD = 30;
 
+/* Moon icon shows on slots starting at or after this time (24h). */
+const EVENING_START = "18:00"; // 6:00 PM
+
 const SPORT_LABEL = {
     football: "Football",
     cricket: "Cricket",
@@ -72,11 +75,15 @@ export default function BookingClient({ pitches, user, initialPitchId }) {
 
     const selectedPitch = pitches.find((p) => p.id === selectedPitchId);
 
-    /* Vertical day grid — keep the selected tile in view. */
+    /* Desktop-only scroll box — keep the selected tile in view.
+       Mobile has no scroll box, so we skip it there to avoid
+       scrolling the whole page. */
     const dateGridRef = useRef(null);
     useEffect(() => {
         const grid = dateGridRef.current;
         if (!grid) return;
+        const isScrollable = grid.scrollHeight > grid.clientHeight + 4;
+        if (!isScrollable) return;
         const el = grid.querySelector(`[data-date="${selectedDateKey}"]`);
         if (el) {
             el.scrollIntoView({
@@ -100,9 +107,10 @@ export default function BookingClient({ pitches, user, initialPitchId }) {
             const isBooked = bookedSet.has(b.startTime);
             const isPast =
                 isPastDay || (isToday && !isPostMidnight && startMins <= nowMins);
+            const isEvening = b.startTime >= EVENING_START || isPostMidnight;
             return {
                 ...b,
-                crossesMidnight: b.startTime >= "23:00" || isPostMidnight,
+                isEvening,
                 isBooked,
                 isPast,
                 isBookable: !isBooked && !isPast,
@@ -208,7 +216,6 @@ export default function BookingClient({ pitches, user, initialPitchId }) {
                 )}
 
                 <div className="grid grid-cols-1 items-start gap-4 sm:gap-6 lg:grid-cols-[320px_1fr]">
-                    {/* LEFT COLUMN — Grounds + Date */}
                     <div className="flex flex-col gap-4 sm:gap-6">
                         {/* Choose Ground */}
                         <div className="rounded-3xl border border-ink-200 bg-white p-4 shadow-sm sm:p-5">
@@ -247,8 +254,8 @@ export default function BookingClient({ pitches, user, initialPitchId }) {
                             </div>
                         </div>
 
-                        {/* Choose Date — capped height with internal scroll */}
-                        <div className="flex flex-col rounded-3xl border border-ink-200 bg-white p-4 shadow-sm sm:p-5">
+                        {/* Choose Date — 5 cols on phone (no scroll), 3 cols desktop (scrollable) */}
+                        <div className="rounded-3xl border border-ink-200 bg-white p-4 shadow-sm sm:p-5">
                             <div className="mb-3 flex items-center justify-between gap-2">
                                 <h2 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-ink-500 sm:text-sm">
                                     <CalendarIcon className="h-4 w-4 text-turf-500" />
@@ -259,10 +266,9 @@ export default function BookingClient({ pitches, user, initialPitchId }) {
                                 </span>
                             </div>
 
-                            {/* Vertical scroll — 3 columns, capped height */}
                             <div
                                 ref={dateGridRef}
-                                className="-mr-1 grid max-h-[360px] grid-cols-3 gap-2 overflow-y-auto pr-1 [scrollbar-width:thin]"
+                                className="-mr-1 grid grid-cols-5 gap-1.5 sm:grid-cols-5 lg:grid-cols-3 lg:max-h-[420px] lg:gap-2 lg:overflow-y-auto lg:pr-1 lg:[scrollbar-width:thin]"
                             >
                                 {days.map((d) => {
                                     const active = d.key === selectedDateKey;
@@ -271,22 +277,22 @@ export default function BookingClient({ pitches, user, initialPitchId }) {
                                             key={d.key}
                                             data-date={d.key}
                                             onClick={() => setSelectedDateKey(d.key)}
-                                            className={`flex flex-col items-center rounded-2xl border px-1.5 py-2.5 transition-all ${active
+                                            className={`flex flex-col items-center rounded-xl border px-1 py-2 transition-all lg:rounded-2xl lg:px-1.5 lg:py-2.5 ${active
                                                 ? "border-turf-400 bg-turf-500 text-white shadow-glow"
                                                 : "border-ink-200 bg-white text-ink-700 hover:border-turf-300 hover:bg-turf-50"
                                                 }`}
                                         >
                                             <span
-                                                className={`text-[10px] font-bold uppercase tracking-wider ${active ? "text-white/80" : "text-ink-400"
+                                                className={`text-[9px] font-bold uppercase tracking-wider lg:text-[10px] ${active ? "text-white/80" : "text-ink-400"
                                                     }`}
                                             >
                                                 {d.weekday}
                                             </span>
-                                            <span className="mt-0.5 text-lg font-extrabold leading-none">
+                                            <span className="mt-0.5 text-base font-extrabold leading-none lg:text-lg">
                                                 {d.label}
                                             </span>
                                             <span
-                                                className={`mt-1 text-[10px] font-medium uppercase tracking-wider ${active ? "text-white/80" : "text-ink-400"
+                                                className={`mt-0.5 text-[9px] font-medium uppercase tracking-wider lg:mt-1 lg:text-[10px] ${active ? "text-white/80" : "text-ink-400"
                                                     }`}
                                             >
                                                 {d.month}
@@ -298,7 +304,7 @@ export default function BookingClient({ pitches, user, initialPitchId }) {
                         </div>
                     </div>
 
-                    {/* RIGHT COLUMN — slots */}
+                    {/* slots */}
                     <div className="rounded-3xl border border-ink-200 bg-white p-4 shadow-sm sm:p-7">
                         <div className="mb-4 flex flex-wrap items-center justify-between gap-3 sm:mb-5">
                             <div>
@@ -354,7 +360,7 @@ export default function BookingClient({ pitches, user, initialPitchId }) {
                                             <span className="text-sm font-bold">
                                                 {format12h(slot.startTime)} – {format12h(slot.endTime)}
                                             </span>
-                                            {slot.crossesMidnight && (
+                                            {slot.isEvening && (
                                                 <Moon className="h-3.5 w-3.5 opacity-60" />
                                             )}
                                         </div>
@@ -389,7 +395,7 @@ export default function BookingClient({ pitches, user, initialPitchId }) {
                             <LegendDot className="border border-ink-100 bg-ink-50" label="Past" />
                             <span className="inline-flex items-center gap-1.5">
                                 <Moon className="h-3 w-3 text-ink-400" />
-                                Crosses midnight
+                                Evening / night
                             </span>
                         </div>
                     </div>
@@ -449,8 +455,8 @@ export default function BookingClient({ pitches, user, initialPitchId }) {
                                         label="Time"
                                         value={`${format12h(pendingBlock.startTime)} – ${format12h(pendingBlock.endTime)}`}
                                     />
-                                    {pendingBlock.crossesMidnight && (
-                                        <Row label="Note" value="Ends after midnight" />
+                                    {pendingBlock.isEvening && (
+                                        <Row label="Note" value="Evening / night slot" />
                                     )}
                                     <Row
                                         label="Total"
