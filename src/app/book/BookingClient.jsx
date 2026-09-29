@@ -51,11 +51,16 @@ function formatBDT(value) {
     return `৳${n.toFixed(0)}`;
 }
 
-export default function BookingClient({ pitches, user }) {
+export default function BookingClient({ pitches, user, initialPitchId }) {
     const [isPending, startTransition] = useTransition();
     const days = useMemo(() => buildDateRange(), []);
 
-    const [selectedPitchId, setSelectedPitchId] = useState(pitches[0]?.id ?? "");
+    const [selectedPitchId, setSelectedPitchId] = useState(() => {
+        const fromParam = initialPitchId
+            ? pitches.find((p) => p.id === initialPitchId)
+            : null;
+        return fromParam?.id ?? pitches[0]?.id ?? "";
+    });
     const [selectedDateKey, setSelectedDateKey] = useState(days[0].key);
     const [blocks, setBlocks] = useState([]);
     const [bookedSet, setBookedSet] = useState(new Set());
@@ -159,18 +164,18 @@ export default function BookingClient({ pitches, user }) {
             <div className="pointer-events-none absolute -top-40 left-1/2 h-96 w-96 -translate-x-1/2 rounded-full bg-turf-300/25 blur-3xl" />
             <div className="pointer-events-none absolute bottom-0 right-0 h-80 w-80 rounded-full bg-turf-200/30 blur-3xl" />
 
-            <div className="relative mx-auto max-w-6xl px-4 py-10 sm:px-6 lg:px-8">
+            <div className="relative mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-10 lg:px-8">
                 <motion.div
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.4 }}
-                    className="mb-8"
+                    className="mb-6 sm:mb-8"
                 >
-                    <span className="inline-flex items-center gap-2 rounded-full border border-turf-200 bg-white px-4 py-1.5 text-xs font-semibold uppercase tracking-wider text-turf-700">
+                    <span className="inline-flex items-center gap-2 rounded-full border border-turf-200 bg-white px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-turf-700 sm:text-xs">
                         <CalendarIcon className="h-3.5 w-3.5" />
                         Book a Slot
                     </span>
-                    <h1 className="mt-4 text-3xl font-extrabold tracking-tight text-ink-900 sm:text-4xl">
+                    <h1 className="mt-3 text-2xl font-extrabold tracking-tight text-ink-900 sm:mt-4 sm:text-3xl lg:text-4xl">
                         Hi {user.name?.split(" ")[0] || "player"}, pick your{" "}
                         <span className="bg-gradient-to-r from-turf-600 to-turf-500 bg-clip-text text-transparent">
                             perfect slot
@@ -182,16 +187,16 @@ export default function BookingClient({ pitches, user }) {
                 </motion.div>
 
                 {error && (
-                    <div className="mb-6 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                    <div className="mb-5 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 sm:mb-6">
                         <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
                         <span>{error}</span>
                     </div>
                 )}
 
-                <div className="grid grid-cols-1 gap-6 lg:grid-cols-[320px_1fr]">
-                    <div className="space-y-6">
-                        <div className="rounded-3xl border border-ink-200 bg-white p-5 shadow-sm">
-                            <h2 className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-ink-500">
+                <div className="grid grid-cols-1 gap-4 sm:gap-6 lg:grid-cols-[320px_1fr]">
+                    <div className="space-y-4 sm:space-y-6">
+                        <div className="rounded-3xl border border-ink-200 bg-white p-4 shadow-sm sm:p-5">
+                            <h2 className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-ink-500 sm:text-sm">
                                 <MapPin className="h-4 w-4 text-turf-500" />
                                 Choose Ground
                             </h2>
@@ -202,7 +207,7 @@ export default function BookingClient({ pitches, user }) {
                                         <button
                                             key={p.id}
                                             onClick={() => setSelectedPitchId(p.id)}
-                                            className={`w-full rounded-2xl border px-4 py-3 text-left transition-all ${active
+                                            className={`w-full rounded-2xl border px-3 py-2.5 text-left transition-all sm:px-4 sm:py-3 ${active
                                                     ? "border-turf-400 bg-turf-50 ring-2 ring-turf-200"
                                                     : "border-ink-200 bg-white hover:border-turf-300 hover:bg-turf-50/50"
                                                 }`}
@@ -226,8 +231,8 @@ export default function BookingClient({ pitches, user }) {
                             </div>
                         </div>
 
-                        <div className="rounded-3xl border border-ink-200 bg-white p-5 shadow-sm">
-                            <h2 className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-ink-500">
+                        <div className="rounded-3xl border border-ink-200 bg-white p-4 shadow-sm sm:p-5">
+                            <h2 className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-ink-500 sm:text-sm">
                                 <CalendarIcon className="h-4 w-4 text-turf-500" />
                                 Choose Date
                             </h2>
@@ -238,7 +243,7 @@ export default function BookingClient({ pitches, user }) {
                                         <button
                                             key={d.key}
                                             onClick={() => setSelectedDateKey(d.key)}
-                                            className={`flex flex-col items-center rounded-2xl border px-3 py-2.5 transition-all ${active
+                                            className={`flex flex-col items-center rounded-2xl border px-2 py-2.5 transition-all sm:px-3 ${active
                                                     ? "border-turf-400 bg-turf-500 text-white shadow-glow"
                                                     : "border-ink-200 bg-white text-ink-700 hover:border-turf-300 hover:bg-turf-50"
                                                 }`}
@@ -265,15 +270,15 @@ export default function BookingClient({ pitches, user }) {
                         </div>
                     </div>
 
-                    <div className="rounded-3xl border border-ink-200 bg-white p-5 shadow-sm sm:p-7">
-                        <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+                    <div className="rounded-3xl border border-ink-200 bg-white p-4 shadow-sm sm:p-7">
+                        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 sm:mb-5">
                             <div>
-                                <h2 className="flex items-center gap-2 text-lg font-extrabold text-ink-900">
+                                <h2 className="flex items-center gap-2 text-base font-extrabold text-ink-900 sm:text-lg">
                                     <Clock className="h-5 w-5 text-turf-500" />
                                     {format(new Date(selectedDateKey), "EEEE, MMMM d")}
                                 </h2>
                                 {selectedPitch && (
-                                    <p className="mt-0.5 text-sm text-ink-500">
+                                    <p className="mt-0.5 text-xs text-ink-500 sm:text-sm">
                                         {selectedPitch.name}
                                     </p>
                                 )}
@@ -287,7 +292,7 @@ export default function BookingClient({ pitches, user }) {
                         </div>
 
                         {!loadingSlots && slots.length === 0 && (
-                            <div className="rounded-2xl border border-dashed border-ink-300 bg-ink-50 p-10 text-center text-sm text-ink-500">
+                            <div className="rounded-2xl border border-dashed border-ink-300 bg-ink-50 p-8 text-center text-sm text-ink-500 sm:p-10">
                                 No slots configured for this ground yet.
                             </div>
                         )}
@@ -349,7 +354,7 @@ export default function BookingClient({ pitches, user }) {
                             })}
                         </div>
 
-                        <div className="mt-6 flex flex-wrap items-center gap-4 border-t border-ink-100 pt-4 text-[11px] text-ink-500">
+                        <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-ink-100 pt-4 text-[11px] text-ink-500 sm:mt-6 sm:gap-4">
                             <LegendDot className="border border-ink-200 bg-white" label="Available" />
                             <LegendDot className="border border-red-200 bg-red-50" label="Booked" />
                             <LegendDot className="border border-ink-100 bg-ink-50" label="Past" />
@@ -400,7 +405,7 @@ export default function BookingClient({ pitches, user }) {
                                 </button>
                             </div>
 
-                            <div className="space-y-5 p-5 sm:p-6">
+                            <div className="space-y-4 p-5 sm:space-y-5 sm:p-6">
                                 <div className="rounded-2xl border border-ink-100 bg-ink-50 p-4 text-sm">
                                     <Row label="Ground" value={selectedPitch.name} />
                                     <Row
