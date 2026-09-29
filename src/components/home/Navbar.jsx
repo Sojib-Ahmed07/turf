@@ -94,7 +94,7 @@ export default function Navbar() {
                         </svg>
                     </motion.div>
                     <span className="text-base font-extrabold tracking-tight text-ink-900 sm:text-lg">
-                        Turf<span className="text-turf-600">Zone</span>
+                        Bondhon<span className="text-turf-600">Sports</span>
                     </span>
                 </Link>
 

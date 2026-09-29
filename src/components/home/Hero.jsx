@@ -7,7 +7,7 @@ import { motion } from "framer-motion";
 import { CalendarCheck, MapPin, ArrowRight, Zap } from "lucide-react";
 
 const HERO_IMAGE =
-    "https://images.unsplash.com/photo-1522778119026-d647f0596c20?q=80&w=2070&auto=format&fit=crop";
+    "https://res.cloudinary.com/dlefye5fi/image/upload/v1790662326/Gemini_Generated_Image_7qawl37qawl37qaw_zsuafr.jpg";
 
 const fadeUp = {
     hidden: { opacity: 0, y: 24 },

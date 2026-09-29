@@ -1,7 +1,7 @@
 // src/app/book/BookingClient.jsx
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { format, addDays, startOfDay } from "date-fns";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -19,8 +19,8 @@ import { startBkashBooking } from "@/app/actions/bkash-payment";
 import { toDateKey } from "@/lib/time";
 import { format12h } from "@/lib/slots";
 
-/* Show today + the next 2 days only. */
-const DAYS_AHEAD = 3;
+/* Today + the next 29 days = 30 day booking window. */
+const DAYS_AHEAD = 30;
 
 const SPORT_LABEL = {
     football: "Football",
@@ -71,6 +71,21 @@ export default function BookingClient({ pitches, user, initialPitchId }) {
     const [modalError, setModalError] = useState("");
 
     const selectedPitch = pitches.find((p) => p.id === selectedPitchId);
+
+    /* Horizontal date strip — keep the selected chip in view. */
+    const dateStripRef = useRef(null);
+    useEffect(() => {
+        const strip = dateStripRef.current;
+        if (!strip) return;
+        const el = strip.querySelector(`[data-date="${selectedDateKey}"]`);
+        if (el) {
+            el.scrollIntoView({
+                behavior: "smooth",
+                block: "nearest",
+                inline: "center",
+            });
+        }
+    }, [selectedDateKey]);
 
     const slots = useMemo(() => {
         const today = new Date();
@@ -208,8 +223,8 @@ export default function BookingClient({ pitches, user, initialPitchId }) {
                                             key={p.id}
                                             onClick={() => setSelectedPitchId(p.id)}
                                             className={`w-full rounded-2xl border px-3 py-2.5 text-left transition-all sm:px-4 sm:py-3 ${active
-                                                    ? "border-turf-400 bg-turf-50 ring-2 ring-turf-200"
-                                                    : "border-ink-200 bg-white hover:border-turf-300 hover:bg-turf-50/50"
+                                                ? "border-turf-400 bg-turf-50 ring-2 ring-turf-200"
+                                                : "border-ink-200 bg-white hover:border-turf-300 hover:bg-turf-50/50"
                                                 }`}
                                         >
                                             <div className="flex items-center justify-between gap-2">
@@ -232,20 +247,31 @@ export default function BookingClient({ pitches, user, initialPitchId }) {
                         </div>
 
                         <div className="rounded-3xl border border-ink-200 bg-white p-4 shadow-sm sm:p-5">
-                            <h2 className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-ink-500 sm:text-sm">
-                                <CalendarIcon className="h-4 w-4 text-turf-500" />
-                                Choose Date
-                            </h2>
-                            <div className="grid grid-cols-3 gap-2">
+                            <div className="mb-3 flex items-center justify-between gap-2">
+                                <h2 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-ink-500 sm:text-sm">
+                                    <CalendarIcon className="h-4 w-4 text-turf-500" />
+                                    Choose Date
+                                </h2>
+                                <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wider text-ink-400">
+                                    Next 30 days
+                                </span>
+                            </div>
+
+                            {/* Horizontal scroll strip of days */}
+                            <div
+                                ref={dateStripRef}
+                                className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-2 [scrollbar-width:thin]"
+                            >
                                 {days.map((d) => {
                                     const active = d.key === selectedDateKey;
                                     return (
                                         <button
                                             key={d.key}
+                                            data-date={d.key}
                                             onClick={() => setSelectedDateKey(d.key)}
-                                            className={`flex flex-col items-center rounded-2xl border px-2 py-2.5 transition-all sm:px-3 ${active
-                                                    ? "border-turf-400 bg-turf-500 text-white shadow-glow"
-                                                    : "border-ink-200 bg-white text-ink-700 hover:border-turf-300 hover:bg-turf-50"
+                                            className={`flex w-16 shrink-0 snap-start flex-col items-center rounded-2xl border px-2 py-2.5 transition-all sm:w-[72px] ${active
+                                                ? "border-turf-400 bg-turf-500 text-white shadow-glow"
+                                                : "border-ink-200 bg-white text-ink-700 hover:border-turf-300 hover:bg-turf-50"
                                                 }`}
                                         >
                                             <span

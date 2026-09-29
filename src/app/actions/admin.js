@@ -17,6 +17,9 @@ import {
 } from "@/lib/slots";
 import { SPORTS } from "@/db/pitch-schema";
 
+/* Number of days the admin block editor can override (today + next 29). */
+const EDITOR_DAYS = 30;
+
 /* -------------------------------------------------------------- */
 /* Guard                                                           */
 /* -------------------------------------------------------------- */
@@ -360,8 +363,8 @@ export async function upsertPitch({
 /**
  * Load block editor data for a pitch:
  *   - the pitch's DEFAULT template
- *   - three days: today, +1, +2 with their current (override or default) blocks
- *   - which of those dates currently has an override
+ *   - 30 days: today through +29, each with its override (if any)
+ *     or the default template
  */
 export async function getPitchBlocksEditorData(pitchId) {
     await requireAdmin();
@@ -373,7 +376,7 @@ export async function getPitchBlocksEditorData(pitchId) {
         .limit(1);
     if (!pitch) throw new Error("Pitch not found");
 
-    const dates = nextDateKeys(3);
+    const dates = nextDateKeys(EDITOR_DAYS);
 
     const overrideRows = await db
         .select()

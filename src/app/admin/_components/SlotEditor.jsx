@@ -1,7 +1,7 @@
 // src/app/admin/_components/SlotEditor.jsx
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { motion } from "framer-motion";
 import {
     X,
@@ -34,30 +34,36 @@ import {
 
 /* ---- date label helpers ---- */
 
-function formatDayLabel(dateKey) {
+function startOfToday() {
+    const t = new Date();
+    t.setHours(0, 0, 0, 0);
+    return t;
+}
+
+/** Short chip label: "Sat 12" / "Today" / "Tomorrow" */
+function formatDayChip(dateKey) {
     const d = new Date(dateKey + "T00:00:00");
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const dayAfter = new Date(today);
-    dayAfter.setDate(dayAfter.getDate() + 2);
+    const today = startOfToday();
+    const diffDays = Math.round((d - today) / (1000 * 60 * 60 * 24));
 
-    const same = (a, b) =>
-        a.getFullYear() === b.getFullYear() &&
-        a.getMonth() === b.getMonth() &&
-        a.getDate() === b.getDate();
+    const weekday = d.toLocaleDateString("en-GB", { weekday: "short" });
+    const dayNum = d.getDate();
 
-    const short = d.toLocaleDateString("en-GB", {
-        weekday: "short",
+    if (diffDays === 0) return `Today · ${dayNum}`;
+    if (diffDays === 1) return `Tomorrow · ${dayNum}`;
+    if (diffDays === 2) return `Day after · ${dayNum}`;
+    return `${weekday} · ${dayNum}`;
+}
+
+/** Longer label for the header under the title. */
+function formatDayLong(dateKey) {
+    const d = new Date(dateKey + "T00:00:00");
+    return d.toLocaleDateString("en-GB", {
+        weekday: "long",
         day: "numeric",
-        month: "short",
+        month: "long",
+        year: "numeric",
     });
-
-    if (same(d, today)) return `Today · ${short}`;
-    if (same(d, tomorrow)) return `Tomorrow · ${short}`;
-    if (same(d, dayAfter)) return `Day after · ${short}`;
-    return short;
 }
 
 export default function SlotEditor({ pitchId, onClose }) {
@@ -69,6 +75,22 @@ export default function SlotEditor({ pitchId, onClose }) {
     const [defaultBlocks, setDefaultBlocks] = useState([]);
     const [days, setDays] = useState([]);
     const [activeTab, setActiveTab] = useState("default"); // "default" or a dateKey
+
+    /* Horizontal day strip — keep the selected chip in view. */
+    const stripRef = useRef(null);
+    useEffect(() => {
+        if (activeTab === "default") return;
+        const strip = stripRef.current;
+        if (!strip) return;
+        const el = strip.querySelector(`[data-tab="${activeTab}"]`);
+        if (el) {
+            el.scrollIntoView({
+                behavior: "smooth",
+                block: "nearest",
+                inline: "center",
+            });
+        }
+    }, [activeTab]);
 
     useEffect(() => {
         let cancelled = false;
@@ -236,10 +258,10 @@ export default function SlotEditor({ pitchId, onClose }) {
                 className="flex h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-t-3xl border border-ink-200 bg-white shadow-2xl sm:rounded-3xl"
             >
                 <div className="flex items-start justify-between border-b border-ink-100 p-5">
-                    <div>
+                    <div className="min-w-0">
                         <h2 className="text-lg font-extrabold text-ink-900">Slot editor</h2>
                         {meta && (
-                            <p className="mt-0.5 text-sm text-ink-500">
+                            <p className="mt-0.5 truncate text-sm text-ink-500">
                                 {meta.name} · {currentBlocks.length} block
                                 {currentBlocks.length === 1 ? "" : "s"}
                                 {derived && (
@@ -253,6 +275,11 @@ export default function SlotEditor({ pitchId, onClose }) {
                                 )}
                             </p>
                         )}
+                        {!isDefaultTab && activeDay && (
+                            <p className="mt-0.5 truncate text-xs font-semibold text-ink-400">
+                                {formatDayLong(activeDay.date)}
+                            </p>
+                        )}
                     </div>
                     <button
                         onClick={onClose}
@@ -262,50 +289,65 @@ export default function SlotEditor({ pitchId, onClose }) {
                     </button>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2 border-b border-ink-100 bg-ink-50/60 px-5 py-3">
-                    <button
-                        onClick={() => {
-                            setActiveTab("default");
-                            setNote("");
-                            setError("");
-                        }}
-                        className={`rounded-full px-3.5 py-1.5 text-xs font-bold uppercase tracking-wider transition-colors ${isDefaultTab
+                {/* Tab strip: Default + horizontally scrollable day chips */}
+                <div className="border-b border-ink-100 bg-ink-50/60">
+                    <div className="flex items-center gap-2 px-5 pt-3">
+                        <button
+                            onClick={() => {
+                                setActiveTab("default");
+                                setNote("");
+                                setError("");
+                            }}
+                            className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-bold uppercase tracking-wider transition-colors ${isDefaultTab
                                 ? "bg-turf-500 text-white shadow-glow"
                                 : "bg-white text-ink-600 ring-1 ring-ink-200 hover:bg-turf-50 hover:text-turf-700"
-                            }`}
+                                }`}
+                        >
+                            Default schedule
+                        </button>
+                        <span className="shrink-0 text-ink-300">|</span>
+                        <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wider text-ink-400">
+                            Next 30 days
+                        </span>
+                    </div>
+
+                    <div
+                        ref={stripRef}
+                        className="flex gap-2 overflow-x-auto px-5 py-3 [scrollbar-width:thin]"
                     >
-                        Default schedule
-                    </button>
-                    <span className="text-ink-300">|</span>
-                    {days.map((d) => {
-                        const active = !isDefaultTab && d.date === activeTab;
-                        return (
-                            <button
-                                key={d.date}
-                                onClick={() => {
-                                    setActiveTab(d.date);
-                                    setNote("");
-                                    setError("");
-                                }}
-                                className={`flex items-center gap-2 rounded-full px-3.5 py-1.5 text-xs font-bold transition-colors ${active
+                        {days.map((d) => {
+                            const active = !isDefaultTab && d.date === activeTab;
+                            return (
+                                <button
+                                    key={d.date}
+                                    data-tab={d.date}
+                                    onClick={() => {
+                                        setActiveTab(d.date);
+                                        setNote("");
+                                        setError("");
+                                    }}
+                                    className={`flex shrink-0 snap-start items-center gap-2 rounded-full px-3.5 py-1.5 text-xs font-bold transition-colors ${active
                                         ? "bg-turf-500 text-white shadow-glow"
                                         : "bg-white text-ink-600 ring-1 ring-ink-200 hover:bg-turf-50 hover:text-turf-700"
-                                    }`}
-                            >
-                                <span>{formatDayLabel(d.date)}</span>
-                                {d.isOverride && (
-                                    <span
-                                        className={`rounded-full px-1.5 py-0.5 text-[9px] uppercase tracking-wider ${active
+                                        }`}
+                                >
+                                    <span className="whitespace-nowrap">
+                                        {formatDayChip(d.date)}
+                                    </span>
+                                    {d.isOverride && (
+                                        <span
+                                            className={`rounded-full px-1.5 py-0.5 text-[9px] uppercase tracking-wider ${active
                                                 ? "bg-white/25 text-white"
                                                 : "bg-amber-100 text-amber-700"
-                                            }`}
-                                    >
-                                        Custom
-                                    </span>
-                                )}
-                            </button>
-                        );
-                    })}
+                                                }`}
+                                        >
+                                            Custom
+                                        </span>
+                                    )}
+                                </button>
+                            );
+                        })}
+                    </div>
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-5">
