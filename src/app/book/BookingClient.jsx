@@ -72,17 +72,16 @@ export default function BookingClient({ pitches, user, initialPitchId }) {
 
     const selectedPitch = pitches.find((p) => p.id === selectedPitchId);
 
-    /* Horizontal date strip — keep the selected chip in view. */
-    const dateStripRef = useRef(null);
+    /* Vertical day grid — keep the selected tile in view. */
+    const dateGridRef = useRef(null);
     useEffect(() => {
-        const strip = dateStripRef.current;
-        if (!strip) return;
-        const el = strip.querySelector(`[data-date="${selectedDateKey}"]`);
+        const grid = dateGridRef.current;
+        if (!grid) return;
+        const el = grid.querySelector(`[data-date="${selectedDateKey}"]`);
         if (el) {
             el.scrollIntoView({
                 behavior: "smooth",
                 block: "nearest",
-                inline: "center",
             });
         }
     }, [selectedDateKey]);
@@ -208,8 +207,10 @@ export default function BookingClient({ pitches, user, initialPitchId }) {
                     </div>
                 )}
 
-                <div className="grid grid-cols-1 gap-4 sm:gap-6 lg:grid-cols-[320px_1fr]">
-                    <div className="space-y-4 sm:space-y-6">
+                <div className="grid grid-cols-1 items-start gap-4 sm:gap-6 lg:grid-cols-[320px_1fr]">
+                    {/* LEFT COLUMN — Grounds + Date */}
+                    <div className="flex flex-col gap-4 sm:gap-6">
+                        {/* Choose Ground */}
                         <div className="rounded-3xl border border-ink-200 bg-white p-4 shadow-sm sm:p-5">
                             <h2 className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-ink-500 sm:text-sm">
                                 <MapPin className="h-4 w-4 text-turf-500" />
@@ -246,7 +247,8 @@ export default function BookingClient({ pitches, user, initialPitchId }) {
                             </div>
                         </div>
 
-                        <div className="rounded-3xl border border-ink-200 bg-white p-4 shadow-sm sm:p-5">
+                        {/* Choose Date — capped height with internal scroll */}
+                        <div className="flex flex-col rounded-3xl border border-ink-200 bg-white p-4 shadow-sm sm:p-5">
                             <div className="mb-3 flex items-center justify-between gap-2">
                                 <h2 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-ink-500 sm:text-sm">
                                     <CalendarIcon className="h-4 w-4 text-turf-500" />
@@ -257,10 +259,10 @@ export default function BookingClient({ pitches, user, initialPitchId }) {
                                 </span>
                             </div>
 
-                            {/* Horizontal scroll strip of days */}
+                            {/* Vertical scroll — 3 columns, capped height */}
                             <div
-                                ref={dateStripRef}
-                                className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-2 [scrollbar-width:thin]"
+                                ref={dateGridRef}
+                                className="-mr-1 grid max-h-[360px] grid-cols-3 gap-2 overflow-y-auto pr-1 [scrollbar-width:thin]"
                             >
                                 {days.map((d) => {
                                     const active = d.key === selectedDateKey;
@@ -269,7 +271,7 @@ export default function BookingClient({ pitches, user, initialPitchId }) {
                                             key={d.key}
                                             data-date={d.key}
                                             onClick={() => setSelectedDateKey(d.key)}
-                                            className={`flex w-16 shrink-0 snap-start flex-col items-center rounded-2xl border px-2 py-2.5 transition-all sm:w-[72px] ${active
+                                            className={`flex flex-col items-center rounded-2xl border px-1.5 py-2.5 transition-all ${active
                                                 ? "border-turf-400 bg-turf-500 text-white shadow-glow"
                                                 : "border-ink-200 bg-white text-ink-700 hover:border-turf-300 hover:bg-turf-50"
                                                 }`}
@@ -296,6 +298,7 @@ export default function BookingClient({ pitches, user, initialPitchId }) {
                         </div>
                     </div>
 
+                    {/* RIGHT COLUMN — slots */}
                     <div className="rounded-3xl border border-ink-200 bg-white p-4 shadow-sm sm:p-7">
                         <div className="mb-4 flex flex-wrap items-center justify-between gap-3 sm:mb-5">
                             <div>
