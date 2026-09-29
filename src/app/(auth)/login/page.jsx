@@ -1,9 +1,9 @@
 // src/app/login/page.jsx
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { ArrowRight, AlertCircle } from "lucide-react";
 import AuthLayout from "@/components/auth/AuthLayout";
@@ -11,8 +11,21 @@ import GoogleButton from "@/components/auth/GoogleButton";
 import TextField from "@/components/auth/TextField";
 import { loginWithEmail, signInWithGoogle } from "@/lib/auth-client";
 
-export default function LoginPage() {
+/** Only allow same-site relative paths as redirect targets. */
+function safeCallback(raw) {
+    if (!raw || typeof raw !== "string") return "/";
+    // must start with a single "/" and not "//" (protocol-relative) or "/\"
+    if (!raw.startsWith("/") || raw.startsWith("//") || raw.startsWith("/\\")) {
+        return "/";
+    }
+    return raw;
+}
+
+function LoginForm() {
     const router = useRouter();
+    const searchParams = useSearchParams();
+    const callbackUrl = safeCallback(searchParams.get("callbackUrl"));
+
     const [form, setForm] = useState({ email: "", password: "" });
     const [errors, setErrors] = useState({});
     const [submitting, setSubmitting] = useState(false);
@@ -30,7 +43,6 @@ export default function LoginPage() {
         e.preventDefault();
         setServerError("");
 
-        // Client-side validation
         const next = {};
         if (!form.email.trim()) next.email = "Email is required";
         else if (!/\S+@\S+\.\S+/.test(form.email))
@@ -44,7 +56,11 @@ export default function LoginPage() {
 
         setSubmitting(true);
         try {
-            const { error } = await loginWithEmail(form.email, form.password);
+            const { error } = await loginWithEmail(
+                form.email,
+                form.password,
+                callbackUrl
+            );
 
             if (error) {
                 setServerError(error.message || "Invalid email or password");
@@ -52,8 +68,8 @@ export default function LoginPage() {
                 return;
             }
 
-            // Success — redirect to home
-            router.push("/");
+            // Success — go where the user was headed (default home)
+            router.push(callbackUrl);
             router.refresh();
         } catch (err) {
             console.error("Login error:", err);
@@ -67,7 +83,7 @@ export default function LoginPage() {
         setServerError("");
         setGoogleLoading(true);
         try {
-            await signInWithGoogle("/");
+            await signInWithGoogle(callbackUrl);
             // Better Auth handles the redirect automatically
         } catch (err) {
             console.error("Google login error:", err);
@@ -84,7 +100,7 @@ export default function LoginPage() {
                 <>
                     Don&apos;t have an account?{" "}
                     <Link
-                        href="/register"
+                        href={`/register?callbackUrl=${encodeURIComponent(callbackUrl)}`}
                         className="font-semibold text-turf-700 hover:text-turf-600 hover:underline"
                     >
                         Sign up
@@ -98,7 +114,6 @@ export default function LoginPage() {
                 transition={{ duration: 0.3 }}
                 className="space-y-5"
             >
-                {/* Server error banner */}
                 {serverError && (
                     <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                         <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -106,14 +121,12 @@ export default function LoginPage() {
                     </div>
                 )}
 
-                {/* Google */}
                 <GoogleButton
                     onClick={handleGoogle}
                     loading={googleLoading}
                     label="Continue with Google"
                 />
 
-                {/* Divider */}
                 <div className="relative flex items-center">
                     <div className="flex-1 border-t border-ink-200" />
                     <span className="px-3 text-xs font-medium uppercase tracking-wider text-ink-400">
@@ -122,7 +135,6 @@ export default function LoginPage() {
                     <div className="flex-1 border-t border-ink-200" />
                 </div>
 
-                {/* Form */}
                 <form onSubmit={handleSubmit} className="space-y-4" noValidate>
                     <TextField
                         label="Email"
@@ -145,7 +157,6 @@ export default function LoginPage() {
                         error={errors.password}
                     />
 
-                    {/* Remember + Forgot */}
                     <div className="flex items-center justify-between">
                         <label className="flex cursor-pointer items-center gap-2 text-sm text-ink-600">
                             <input
@@ -162,7 +173,6 @@ export default function LoginPage() {
                         </Link>
                     </div>
 
-                    {/* Submit */}
                     <button
                         type="submit"
                         disabled={submitting || googleLoading}
@@ -183,5 +193,13 @@ export default function LoginPage() {
                 </form>
             </motion.div>
         </AuthLayout>
+    );
+}
+
+export default function LoginPage() {
+    return (
+        <Suspense fallback={null}>
+            <LoginForm />
+        </Suspense>
     );
 }

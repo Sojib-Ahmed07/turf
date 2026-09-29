@@ -1,9 +1,9 @@
 // src/app/register/page.jsx
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { ArrowRight, Check, AlertCircle } from "lucide-react";
 import AuthLayout from "@/components/auth/AuthLayout";
@@ -11,8 +11,20 @@ import GoogleButton from "@/components/auth/GoogleButton";
 import TextField from "@/components/auth/TextField";
 import { registerWithEmail, signInWithGoogle } from "@/lib/auth-client";
 
-export default function RegisterPage() {
+/** Only allow same-site relative paths as redirect targets. */
+function safeCallback(raw) {
+    if (!raw || typeof raw !== "string") return "/";
+    if (!raw.startsWith("/") || raw.startsWith("//") || raw.startsWith("/\\")) {
+        return "/";
+    }
+    return raw;
+}
+
+function RegisterForm() {
     const router = useRouter();
+    const searchParams = useSearchParams();
+    const callbackUrl = safeCallback(searchParams.get("callbackUrl"));
+
     const [form, setForm] = useState({
         name: "",
         email: "",
@@ -35,7 +47,6 @@ export default function RegisterPage() {
         e.preventDefault();
         setServerError("");
 
-        // Validation
         const next = {};
         if (!form.name.trim()) next.name = "Name is required";
         if (!form.email.trim()) next.email = "Email is required";
@@ -57,6 +68,7 @@ export default function RegisterPage() {
                 name: form.name.trim(),
                 email: form.email.trim(),
                 password: form.password,
+                callbackURL: callbackUrl,
             });
 
             if (error) {
@@ -65,8 +77,8 @@ export default function RegisterPage() {
                 return;
             }
 
-            // Success — redirect
-            router.push("/");
+            // Success — go where the user was headed (default home)
+            router.push(callbackUrl);
             router.refresh();
         } catch (err) {
             console.error("Register error:", err);
@@ -80,7 +92,7 @@ export default function RegisterPage() {
         setServerError("");
         setGoogleLoading(true);
         try {
-            await signInWithGoogle("/");
+            await signInWithGoogle(callbackUrl);
         } catch (err) {
             console.error("Google signup error:", err);
             setServerError("Google sign-up failed. Please try again.");
@@ -96,7 +108,7 @@ export default function RegisterPage() {
                 <>
                     Already have an account?{" "}
                     <Link
-                        href="/login"
+                        href={`/login?callbackUrl=${encodeURIComponent(callbackUrl)}`}
                         className="font-semibold text-turf-700 hover:text-turf-600 hover:underline"
                     >
                         Log in
@@ -110,7 +122,6 @@ export default function RegisterPage() {
                 transition={{ duration: 0.3 }}
                 className="space-y-5"
             >
-                {/* Server error banner */}
                 {serverError && (
                     <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                         <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -118,14 +129,12 @@ export default function RegisterPage() {
                     </div>
                 )}
 
-                {/* Google */}
                 <GoogleButton
                     onClick={handleGoogle}
                     loading={googleLoading}
                     label="Sign up with Google"
                 />
 
-                {/* Divider */}
                 <div className="relative flex items-center">
                     <div className="flex-1 border-t border-ink-200" />
                     <span className="px-3 text-xs font-medium uppercase tracking-wider text-ink-400">
@@ -134,7 +143,6 @@ export default function RegisterPage() {
                     <div className="flex-1 border-t border-ink-200" />
                 </div>
 
-                {/* Form */}
                 <form onSubmit={handleSubmit} className="space-y-4" noValidate>
                     <TextField
                         label="Full name"
@@ -176,7 +184,6 @@ export default function RegisterPage() {
                         error={errors.confirm}
                     />
 
-                    {/* Password rules */}
                     <div className="rounded-xl border border-ink-200 bg-ink-50 p-3">
                         <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-500">
                             Password must contain
@@ -189,7 +196,6 @@ export default function RegisterPage() {
                         </ul>
                     </div>
 
-                    {/* Terms */}
                     <label className="flex cursor-pointer items-start gap-2 text-xs text-ink-600">
                         <input
                             type="checkbox"
@@ -214,7 +220,6 @@ export default function RegisterPage() {
                         </span>
                     </label>
 
-                    {/* Submit */}
                     <button
                         type="submit"
                         disabled={submitting || googleLoading}
@@ -235,6 +240,14 @@ export default function RegisterPage() {
                 </form>
             </motion.div>
         </AuthLayout>
+    );
+}
+
+export default function RegisterPage() {
+    return (
+        <Suspense fallback={null}>
+            <RegisterForm />
+        </Suspense>
     );
 }
 

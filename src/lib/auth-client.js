@@ -34,13 +34,22 @@ export const signInWithGoogle = async (callbackURL = "/") => {
 };
 
 /** Email + password login */
-export const loginWithEmail = async (email, password) => {
-    return authClient.signIn.email({ email, password });
+export const loginWithEmail = async (email, password, callbackURL) => {
+    return authClient.signIn.email({
+        email,
+        password,
+        ...(callbackURL ? { callbackURL } : {}),
+    });
 };
 
 /** Email + password signup */
-export const registerWithEmail = async ({ name, email, password }) => {
-    return authClient.signUp.email({ name, email, password });
+export const registerWithEmail = async ({ name, email, password, callbackURL }) => {
+    return authClient.signUp.email({
+        name,
+        email,
+        password,
+        ...(callbackURL ? { callbackURL } : {}),
+    });
 };
 
 /** Sign out + redirect */

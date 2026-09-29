@@ -49,11 +49,19 @@ export default function Navbar() {
     const isActive = (link) =>
         link.exact ? pathname === link.href : pathname.startsWith(link.href);
 
+    // Where to send the user back after login/register.
+    // Don't send them back to /login or /register themselves.
+    const callbackUrl =
+        pathname && pathname !== "/login" && pathname !== "/register"
+            ? pathname
+            : "/";
+    const encodedCallback = encodeURIComponent(callbackUrl);
+
     return (
         <header
             className={`sticky top-0 z-50 w-full transition-all duration-300 ${scrolled
-                    ? "border-b border-ink-200 bg-white/90 shadow-sm shadow-ink-900/5 backdrop-blur-md"
-                    : "border-b border-transparent bg-white"
+                ? "border-b border-ink-200 bg-white/90 shadow-sm shadow-ink-900/5 backdrop-blur-md"
+                : "border-b border-transparent bg-white"
                 }`}
         >
             <nav className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-3 sm:px-6 lg:px-8">
@@ -99,8 +107,8 @@ export default function Navbar() {
                                 <Link
                                     href={link.href}
                                     className={`relative flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${active
-                                            ? "text-turf-700"
-                                            : "text-ink-600 hover:text-ink-900"
+                                        ? "text-turf-700"
+                                        : "text-ink-600 hover:text-ink-900"
                                         }`}
                                 >
                                     <link.icon className="h-4 w-4" />
@@ -131,14 +139,14 @@ export default function Navbar() {
                     ) : (
                         <>
                             <Link
-                                href="/login"
+                                href={`/login?callbackUrl=${encodedCallback}`}
                                 className="hidden items-center gap-2 rounded-full border border-ink-200 px-4 py-2 text-sm font-semibold text-ink-700 transition-all hover:border-turf-400 hover:bg-turf-50 hover:text-turf-700 sm:flex"
                             >
                                 <LogIn className="h-4 w-4" />
                                 Sign in
                             </Link>
                             <Link
-                                href="/register"
+                                href={`/register?callbackUrl=${encodedCallback}`}
                                 className="hidden items-center gap-2 rounded-full bg-gradient-to-r from-turf-500 to-turf-600 px-4 py-2 text-sm font-semibold text-white shadow-glow transition-all hover:from-turf-400 hover:to-turf-500 active:scale-95 sm:flex"
                             >
                                 <UserPlus className="h-4 w-4" />
@@ -205,8 +213,8 @@ export default function Navbar() {
                                             href={link.href}
                                             onClick={closeMenu}
                                             className={`flex items-center gap-3 rounded-xl px-4 py-3 text-base font-medium transition-colors ${active
-                                                    ? "bg-turf-50 text-turf-700 ring-1 ring-turf-200"
-                                                    : "text-ink-600 hover:bg-ink-50 hover:text-ink-900"
+                                                ? "bg-turf-50 text-turf-700 ring-1 ring-turf-200"
+                                                : "text-ink-600 hover:bg-ink-50 hover:text-ink-900"
                                                 }`}
                                         >
                                             <link.icon className="h-5 w-5" />
@@ -241,7 +249,7 @@ export default function Navbar() {
                             ) : (
                                 <>
                                     <Link
-                                        href="/register"
+                                        href={`/register?callbackUrl=${encodedCallback}`}
                                         onClick={closeMenu}
                                         className="flex items-center justify-center gap-2 rounded-full bg-gradient-to-r from-turf-500 to-turf-600 px-5 py-3 text-sm font-semibold text-white shadow-glow active:scale-95"
                                     >
@@ -249,7 +257,7 @@ export default function Navbar() {
                                         Create account
                                     </Link>
                                     <Link
-                                        href="/login"
+                                        href={`/login?callbackUrl=${encodedCallback}`}
                                         onClick={closeMenu}
                                         className="flex items-center justify-center gap-2 rounded-full border border-ink-200 px-5 py-3 text-sm font-semibold text-ink-700 transition-colors hover:bg-ink-50"
                                     >
