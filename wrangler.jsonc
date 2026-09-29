@@ -1,13 +1,18 @@
 {
     "$schema": "node_modules/wrangler/config-schema.json",
-    "main": ".open-next/worker.js",
     "name": "turf-website",
-    "compatibility_date": "2024-12-30",
+    "main": ".open-next/worker.js",
+    "compatibility_date": "2026-07-01",
     "compatibility_flags": [
-        "nodejs_compat"
+        "nodejs_compat",
+        "nodejs_compat_populate_process_env"
     ],
     "assets": {
         "directory": ".open-next/assets",
         "binding": "ASSETS"
+    },
+    "vars": {
+        "NEXT_PUBLIC_APP_URL": "https://turf-website.adestrasolutions.workers.dev",
+        "BETTER_AUTH_URL": "https://turf-website.adestrasolutions.workers.dev"
     }
 }

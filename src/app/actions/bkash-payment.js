@@ -23,6 +23,43 @@ function isUuid(v) {
 }
 
 /**
+ * Resolve the app's public origin for building the bKash callback URL.
+ *
+ * Order of preference:
+ *   1. BETTER_AUTH_URL  (explicit, set as a Worker secret)
+ *   2. NEXT_PUBLIC_APP_URL  (fallback, set at build time)
+ *
+ * Throws if neither is set, or if the resolved origin is http:// in a
+ * non-local environment — bKash rejects non-HTTPS callback URLs.
+ */
+function getAppOrigin() {
+    const raw =
+        process.env.BETTER_AUTH_URL ||
+        process.env.NEXT_PUBLIC_APP_URL ||
+        "";
+
+    const trimmed = String(raw).trim().replace(/\/+$/, "");
+
+    if (!trimmed) {
+        throw new Error(
+            "Server misconfigured: set BETTER_AUTH_URL (or NEXT_PUBLIC_APP_URL) to your public https URL."
+        );
+    }
+
+    const isLocal =
+        trimmed.startsWith("http://localhost") ||
+        trimmed.startsWith("http://127.0.0.1");
+
+    if (!isLocal && !trimmed.startsWith("https://")) {
+        throw new Error(
+            `BETTER_AUTH_URL must be an https:// URL in production (got "${trimmed}"). bKash requires HTTPS callbacks.`
+        );
+    }
+
+    return trimmed;
+}
+
+/**
  * Resolve the block a user is trying to book.
  *
  * Two shapes of `timeBlockId` are possible:
@@ -93,6 +130,14 @@ export async function startBkashBooking({ pitchId, timeBlockId, bookingDate }) {
 
     if (!pitchId || !timeBlockId || !bookingDate) {
         throw new Error("Missing booking details.");
+    }
+
+    // Fail fast if required secrets are missing on the Worker.
+    if (!process.env.BKASH_BASE_URL || !process.env.BKASH_APP_KEY) {
+        console.error(
+            "[startBkashBooking] Missing bKash env vars. Ensure BKASH_BASE_URL, BKASH_USERNAME, BKASH_PASSWORD, BKASH_APP_KEY, BKASH_APP_SECRET are set as Worker secrets."
+        );
+        throw new Error("Payment service is not configured.");
     }
 
     const [pitch] = await db
@@ -168,10 +213,23 @@ export async function startBkashBooking({ pitchId, timeBlockId, bookingDate }) {
                 "This slot was just booked by someone else. Please choose another."
             );
         }
+        console.error("[startBkashBooking] insert failed:", err);
         throw err;
     }
 
-    const origin = process.env.BETTER_AUTH_URL || "http://localhost:3000";
+    // Build bKash callback URL from the app's public origin.
+    let origin;
+    try {
+        origin = getAppOrigin();
+    } catch (err) {
+        // Booking row already created; cancel it before re-throwing.
+        await db
+            .update(bookings)
+            .set({ status: "cancelled" })
+            .where(eq(bookings.id, booking.id));
+        throw err;
+    }
+
     const callbackURL = `${origin}/api/bkash/callback?bookingId=${booking.id}`;
 
     let payment;
@@ -182,11 +240,23 @@ export async function startBkashBooking({ pitchId, timeBlockId, bookingDate }) {
             callbackURL,
         });
     } catch (err) {
+        // Log the raw bKash error so it shows up in `wrangler tail`.
+        console.error("[startBkashBooking] createBkashPayment failed:", {
+            message: err?.message,
+            stack: err?.stack,
+            callbackURL,
+            amount: price,
+        });
+
+        // Free up the slot.
         await db
             .update(bookings)
             .set({ status: "cancelled" })
             .where(eq(bookings.id, booking.id));
-        throw err;
+
+        throw new Error(
+            err?.message || "Could not start bKash payment. Please try again."
+        );
     }
 
     await db

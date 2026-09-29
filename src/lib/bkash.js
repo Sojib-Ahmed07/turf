@@ -1,26 +1,21 @@
 // src/lib/bkash.js
 import "server-only";
 
-/* -------------------------------------------------------------- */
-/* Config                                                          */
-/* -------------------------------------------------------------- */
-
 const BASE_URL = process.env.BKASH_BASE_URL;
 const USERNAME = process.env.BKASH_USERNAME;
 const PASSWORD = process.env.BKASH_PASSWORD;
 const APP_KEY = process.env.BKASH_APP_KEY;
 const APP_SECRET = process.env.BKASH_APP_SECRET;
 
-/* -------------------------------------------------------------- */
-/* Token cache (module-scope, per server instance)                 */
-/* -------------------------------------------------------------- */
-
 let cachedToken = null;
 let cachedTokenExpiresAt = 0;
 
 /**
  * Get (or refresh) the bKash id_token.
- * Tokens are valid ~1 hour; we cache for 55 minutes to be safe.
+ * 
+ * CRITICAL: bKash's sandbox requires the `username` and `password` as HTTP headers.
+ * Cloudflare Workers' fetch() can be strict about header values. We need to ensure
+ * they are sent as raw strings without any encoding.
  */
 export async function getBkashToken() {
     const now = Date.now();
@@ -31,8 +26,8 @@ export async function getBkashToken() {
         headers: {
             "Content-Type": "application/json",
             Accept: "application/json",
-            username: USERNAME, // Must be lowercase 'username'
-            password: PASSWORD, // Must be lowercase 'password'
+            username: USERNAME,
+            password: PASSWORD,
         },
         body: JSON.stringify({
             app_key: APP_KEY,
@@ -44,6 +39,11 @@ export async function getBkashToken() {
     const data = await res.json();
     if (!res.ok || !data?.id_token) {
         console.error("bKash token error:", data);
+        // Log headers for debugging (sanitized)
+        console.error("Request headers sent:", {
+            username: USERNAME,
+            passwordLength: PASSWORD ? PASSWORD.length : 0,
+        });
         throw new Error(
             data?.statusMessage || "Failed to obtain bKash token."
         );
@@ -54,16 +54,6 @@ export async function getBkashToken() {
     return cachedToken;
 }
 
-/* -------------------------------------------------------------- */
-/* Create payment                                                  */
-/* -------------------------------------------------------------- */
-
-/**
- * @param {object} params
- * @param {number} params.amount          e.g. 800
- * @param {string} params.payerReference  your booking id
- * @param {string} params.callbackURL     where bKash redirects after payment
- */
 export async function createBkashPayment({ amount, payerReference, callbackURL }) {
     const token = await getBkashToken();
 
@@ -102,13 +92,6 @@ export async function createBkashPayment({ amount, payerReference, callbackURL }
     };
 }
 
-/* -------------------------------------------------------------- */
-/* Execute payment                                                 */
-/* -------------------------------------------------------------- */
-
-/**
- * Finalize the payment after the user returns from bKash.
- */
 export async function executeBkashPayment(paymentID) {
     const token = await getBkashToken();
 
@@ -128,9 +111,6 @@ export async function executeBkashPayment(paymentID) {
     return data;
 }
 
-/**
- * Query payment status (used if execute fails on a network blip).
- */
 export async function queryBkashPayment(paymentID) {
     const token = await getBkashToken();
 

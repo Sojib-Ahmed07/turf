@@ -4,13 +4,15 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { db } from "@/db/index.js";
 import * as schema from "@/db/schema.js";
 
+const APP_URL = process.env.BETTER_AUTH_URL || "http://localhost:3000";
+
 export const auth = betterAuth({
     database: drizzleAdapter(db, {
         provider: "pg",
         schema: schema,
     }),
 
-    baseURL: process.env.BETTER_AUTH_URL || "http://localhost:3000",
+    baseURL: APP_URL,
 
     emailAndPassword: {
         enabled: true,
@@ -28,21 +30,19 @@ export const auth = betterAuth({
         updateAge: 60 * 60 * 24,
     },
 
-    // ✅ Expose `role` on session.user and session.user.role
     user: {
         additionalFields: {
             role: {
                 type: "string",
                 required: false,
                 defaultValue: "user",
-                input: false, // don't let users set it during signup
+                input: false,
             },
         },
     },
 
-    trustedOrigins: [
-        process.env.BETTER_AUTH_URL || "http://localhost:3000",
-    ],
+    // Always trust the app URL and localhost (for dev).
+    trustedOrigins: [APP_URL, "http://localhost:3000"],
 });
 
 export default auth;
